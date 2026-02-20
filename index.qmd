@@ -35,5 +35,5 @@ leaflet()  |>
   )
 ```
 
-r format(Sys.time(), "%A %m %d, %Y at %H:%M%p")
+Last Updated: `r format(Sys.time(), "%A %m %d, %Y at %H:%M%p")`
 
