@@ -1,0 +1,14 @@
+---
+title: "Khushwant Khatri - STA 9750"
+---
+
+Hi, I’m Khushwant Khatri, a graduate student at Baruch College.
+
+This website contains my submissions and projects for STA 9750.
+
+```{r}
+#| include: false
+1+1
+```
+--------------
+Last Updated: `r format(Sys.time(), "%A %m %d, %Y at %H:%M%p")`
