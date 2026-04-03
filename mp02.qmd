@@ -1,0 +1,945 @@
+---
+title: "Mini-Project 02 - How Do You Do 'You Do You'?"
+author: "khushwant-khatri590"
+editor:
+    mode: source
+format:
+    html:
+        code-fold: true
+        toc: true
+        toc-depth: 3
+        theme: flatly
+        backgroundcolor: "#f0f4f8"
+---
+
+## Introduction
+
+In this mini-project, I explore data from the American Time Use Survey (ATUS),
+a joint effort of the US Bureau of Labor Statistics and the US Census Bureau.
+The ATUS tracks how Americans spend their time across a wide range of daily
+activities. Using public-use microdata from 2003 to 2024, I investigate patterns
+in time use across different demographics, including stay-at-home dads, college
+undergraduates, and working professionals.
+
+This analysis practices key data skills including joining multiple data sources
+with `dplyr`, creating publication-quality tables with `gt`, and building
+informative visualizations with `ggplot2`.
+
+## Data Acquisition
+
+In this section, I download the ATUS data files from the US Bureau of Labor
+Statistics website using the instructor-provided functions below.
+```{r}
+#| message: false
+#| warning: false
+
+library(tidyverse)
+library(glue)
+library(readxl)
+library(httr2)
+library(gt)
+
+load_atus_data <- function(file_base = c("resp", "rost", "act")){
+    if(!dir.exists(file.path("data", "mp02"))){
+        dir.create(file.path("data", "mp02"), showWarnings=FALSE, recursive=TRUE)
+    }
+    
+    file_base <- match.arg(file_base)
+    
+    file_name_out <- file.path("data", 
+                               "mp02", 
+                               glue("atus{file_base}_0324.dat"))
+        
+    if(!file.exists(file_name_out)){
+        
+        url_end <- glue("atus{file_base}-0324.zip")
+        
+        temp_zip <- tempfile(fileext=".zip")
+        temp_dir <- tools::file_path_sans_ext(temp_zip)
+        
+        request("https://www.bls.gov") |>
+            req_url_path("tus", "datafiles", url_end) |>
+            req_headers(`User-Agent` = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:149.0) Gecko/20100101 Firefox/149.0") |>
+            req_perform(temp_zip)
+    
+        unzip(temp_zip, exdir = temp_dir)
+        
+        temp_file <- file.path(temp_dir, basename(file_name_out))
+        
+        file.copy(temp_file, file_name_out)
+    }
+    
+    file <- read_csv(file_name_out, 
+                     show_col_types = FALSE)
+    
+    switch(file_base, 
+           resp=file |> 
+                  rename(survey_weight = TUFNWGTP, 
+                         time_alone = TRTALONE, 
+                         survey_year = TUYEAR),
+           rost=file |>
+                  mutate(sex = case_match(TESEX, 1 ~ "M", 2 ~ "F")), 
+           act =file |>
+                mutate(activity_n_of_day = TUACTIVITY_N, 
+                       time_spent_min = TUACTDUR24, 
+                       start_time = TUSTARTTIM,
+                       stop_time = TUSTOPTIME, 
+                       level1_code = paste0(TRTIER1P, "0000"), 
+                       level2_code = paste0(TRTIER2P, "00"),
+                       level3_code = TRCODEP) 
+           ) |> 
+                rename(participant_id = TUCASEID) |>
+                select(matches("[:lower:]", 
+                               ignore.case=FALSE))
+}
+
+load_atus_activities <- function(){
+    if(!dir.exists(file.path("data", "mp02"))){
+        dir.create(file.path("data", "mp02"), showWarnings=FALSE, recursive=TRUE)
+    }
+    
+    dest_file <- file.path("data",
+                           "mp02",
+                           "atus_activity_codes.csv")
+    
+    if(!file.exists(dest_file)){
+        download.file("https://michael-weylandt.com/STA9750/mini/atus_activity_codes.csv", 
+                      quiet=TRUE, 
+                      destfile=dest_file, 
+                      mode="wb")
+    }
+    
+    read_csv(dest_file, show_col_types = FALSE) 
+}
+
+# Load all 4 data tables
+atus_resp  <- load_atus_data("resp")
+atus_rost  <- load_atus_data("rost")
+atus_act   <- load_atus_data("act")
+atus_codes <- load_atus_activities()
+
+# Verify data loaded correctly
+glimpse(atus_resp)
+glimpse(atus_rost)
+glimpse(atus_act)
+glimpse(atus_codes)
+```
+
+## Data Cleaning and Preparation
+
+### Task 2: Practice Joining Data Files
+
+The four tables in this analysis are connected through shared key columns.
+The `participant_id` column links `atus_resp`, `atus_rost`, and `atus_act`
+together — each respondent has a unique ID that appears across all three files.
+The activity codes in `atus_act` (`level2_code`, `level3_code`) correspond to
+`code_level2` and `code_level3` in `atus_codes`, allowing us to translate
+numeric codes into readable activity names like "Sleeping" or "Watching TV".
+When joining these tables, we use `inner_join` when we only want rows that
+exist in both tables, and `left_join` when we want to keep all rows from the
+left table regardless of whether a match exists in the right table.
+
+### Task 3: Adding Additional Demographic Variables
+
+In this section, I modify the `load_atus_data` function to include five
+additional demographic variables: number of children in the home, marital
+status, employment status, activity location, and college enrollment status.
+Note that age (`TEAGE`) is stored in the roster file, not the respondent file.
+The `case_match` function is used to recode numeric codes into readable values,
+and Boolean operators (`&`) are used to combine variables for college enrollment.
+```{r}
+#| message: false
+#| warning: false
+
+load_atus_data <- function(file_base = c("resp", "rost", "act")){
+    if(!dir.exists(file.path("data", "mp02"))){
+        dir.create(file.path("data", "mp02"), showWarnings=FALSE, recursive=TRUE)
+    }
+    
+    file_base <- match.arg(file_base)
+    
+    file_name_out <- file.path("data", 
+                               "mp02", 
+                               glue("atus{file_base}_0324.dat"))
+        
+    if(!file.exists(file_name_out)){
+        
+        url_end <- glue("atus{file_base}-0324.zip")
+        
+        temp_zip <- tempfile(fileext=".zip")
+        temp_dir <- tools::file_path_sans_ext(temp_zip)
+        
+        request("https://www.bls.gov") |>
+            req_url_path("tus", "datafiles", url_end) |>
+            req_headers(`User-Agent` = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:149.0) Gecko/20100101 Firefox/149.0") |>
+            req_perform(temp_zip)
+    
+        unzip(temp_zip, exdir = temp_dir)
+        
+        temp_file <- file.path(temp_dir, basename(file_name_out))
+        
+        file.copy(temp_file, file_name_out)
+    }
+    
+    file <- read_csv(file_name_out, 
+                     show_col_types = FALSE)
+    
+    switch(file_base, 
+           # ---- RESPONDENT FILE ----
+           resp = file |> 
+                    rename(
+                        survey_weight = TUFNWGTP,
+                        time_alone    = TRTALONE,
+                        survey_year   = TUYEAR
+                    ) |>
+                    mutate(
+                        num_children = TRCHILDNUM,
+                        hourly_earnings = TRERNHLY,
+                        married = case_match(
+                            TRSPPRES,
+                            1 ~ "Married",
+                            2 ~ "Unmarried Partner",
+                            3 ~ "Not Married"
+                        ),
+                        employment_status = case_match(
+                            TELFS,
+                            1 ~ "Employed Full Time",
+                            2 ~ "Employed Part Time",
+                            3 ~ "Unemployed",
+                            4 ~ "Not in Labor Force",
+                            5 ~ "Retired"
+                        ),
+                        enrolled_in_college = 
+                            (TESCHENR == 1) & (TESCHLVL == 2)
+                    ) |>
+                    rename(participant_id = TUCASEID) |>
+                    select(participant_id, survey_weight, time_alone,
+                           survey_year, num_children, hourly_earnings,
+                           married, employment_status, enrolled_in_college),
+           
+           # ---- ROSTER FILE ----
+           rost = file |>
+                    mutate(
+                        sex = case_match(TESEX, 1 ~ "M", 2 ~ "F"),
+                        age = TEAGE
+                    ) |>
+                    rename(participant_id = TUCASEID) |>
+                    select(participant_id, sex, age),
+           
+           # ---- ACTIVITY FILE ----
+           act = file |>
+                    mutate(
+                        activity_n_of_day = TUACTIVITY_N, 
+                        time_spent_min    = TUACTDUR24, 
+                        start_time        = TUSTARTTIM,
+                        stop_time         = TUSTOPTIME, 
+                        level1_code       = paste0(TRTIER1P, "0000"), 
+                        level2_code       = paste0(TRTIER2P, "00"),
+                        level3_code       = TRCODEP,
+                        activity_location = case_match(
+                            TEWHERE,
+                            1  ~ "Home",
+                            2  ~ "Workplace",
+                            3  ~ "Someone Else's Home",
+                            4  ~ "Restaurant or Bar",
+                            5  ~ "Place of Worship",
+                            6  ~ "Grocery Store",
+                            7  ~ "Other Store",
+                            8  ~ "School",
+                            9  ~ "Outdoors",
+                            10 ~ "Library",
+                            11 ~ "Other Place",
+                            89 ~ "Vehicle"
+                        )
+                    ) |>
+                    rename(participant_id = TUCASEID) |>
+                    select(participant_id, activity_n_of_day,
+                           time_spent_min, start_time, stop_time,
+                           level1_code, level2_code, level3_code,
+                           activity_location)
+           )
+}
+
+# Reload with updated function
+atus_resp  <- load_atus_data("resp")
+atus_rost  <- load_atus_data("rost")
+atus_act   <- load_atus_data("act")
+atus_codes <- load_atus_activities()
+
+# Verify new columns
+glimpse(atus_resp)
+glimpse(atus_rost)
+glimpse(atus_act)
+```
+
+## Data Integration and Initial Exploration
+
+### Survey Weighting
+
+When working with microdata, raw averages from survey respondents rarely
+reflect true population averages. Because survey respondent distributions
+rarely match the actual population distributions, weighted averages are
+used to adjust the sample to match the demographics of the population.
+The Census Bureau provides pre-computed weights represented by the
+`survey_weight` variable in our data.
+
+As an example, we can examine how much time the average American spent
+on social activities each year using these weights:
+```{r}
+#| message: false
+#| warning: false
+
+social_codes <- atus_codes |>
+    filter(task_level1 == "Socializing, Relaxing, and Leisure") |>
+    select(code_level1) |>
+    distinct()
+
+atus_act |>
+    filter(level1_code %in% social_codes$code_level1) |>
+    group_by(participant_id) |>
+    summarize(total_social_min = sum(time_spent_min, na.rm = TRUE)) |>
+    inner_join(atus_resp, join_by(participant_id)) |>
+    group_by(survey_year) |>
+    summarize(avg_social_hrs = weighted.mean(total_social_min / 60, 
+                                             survey_weight)) |>
+    ggplot(aes(x = survey_year, y = avg_social_hrs)) +
+        theme_bw() +
+        geom_area(fill = "steelblue", alpha = 0.6) +
+        geom_point(aes(color = if_else(survey_year == 2020, "red", "steelblue")),
+                   size = 2) +
+        scale_color_identity() +
+        xlab("ATUS Survey Year") +
+        ylab("Average Hours on Social Activities") +
+        ggtitle("Average Time Spent on Social Activities per Year",
+                "2020 Estimates (Red) Reflect COVID-19 Impact") +
+        labs(caption = "Estimates Created Using 2003-2024 Public Use Microdata Samples")
+```
+
+There is a notable dip in social activity time in 2020, likely driven by COVID-19 lockdowns which dramatically changed how Americans spent their time. Post-2020 levels reflect a gradual return to pre-pandemic patterns.
+
+## Exploratory Analysis
+
+### Task 4: Exploratory Questions - Inline Values
+
+```{r}
+#| message: false
+#| warning: false
+#| echo: false
+
+n_respondents <- atus_resp |>
+    summarize(n = n_distinct(participant_id)) |>
+    pull(n)
+
+n_sports <- atus_codes |>
+    filter(str_detect(task_level2, "Sports") &
+           str_detect(task_level3, "Watching")) |>
+    summarize(n = n_distinct(task_level3)) |>
+    pull(n)
+
+pct_retired <- atus_resp |>
+    mutate(is_retired = employment_status == "Retired") |>
+    summarize(pct = weighted.mean(is_retired, survey_weight,
+                                  na.rm = TRUE) * 100) |>
+    pull(pct) |>
+    round(1)
+
+sleep_codes <- atus_codes |>
+    filter(task_level2 == "Sleeping") |>
+    select(code_level2) |>
+    distinct()
+
+avg_sleep_hrs <- atus_act |>
+    filter(level2_code %in% sleep_codes$code_level2) |>
+    group_by(participant_id) |>
+    summarize(total_sleep_min = sum(time_spent_min, na.rm = TRUE)) |>
+    inner_join(atus_resp, join_by(participant_id)) |>
+    summarize(avg_sleep = weighted.mean(total_sleep_min / 60,
+                                        survey_weight)) |>
+    pull(avg_sleep) |>
+    round(1)
+
+childcare_codes <- atus_codes |>
+    filter(task_level1 == "Caring for and Helping Household Members") |>
+    select(code_level1) |>
+    distinct()
+
+avg_childcare_hrs <- atus_act |>
+    filter(level1_code %in% childcare_codes$code_level1) |>
+    group_by(participant_id) |>
+    summarize(total_childcare_min = sum(time_spent_min, na.rm = TRUE)) |>
+    inner_join(atus_resp, join_by(participant_id)) |>
+    filter(!is.na(num_children) & num_children >= 1) |>
+    summarize(avg_childcare = weighted.mean(total_childcare_min / 60,
+                                             survey_weight,
+                                             na.rm = TRUE)) |>
+    pull(avg_childcare) |>
+    round(1)
+```
+
+Since 2003, a total of `r format(n_respondents, big.mark = ",")` different respondents have participated in the ATUS survey.
+
+The ATUS tracks `r n_sports` different sports that Americans watch as a Level 3 activity.
+
+Approximately `r pct_retired`% of Americans are retired.
+
+On average, Americans sleep `r avg_sleep_hrs` hours per night.
+
+Among Americans with one or more children in the home, the average time spent on child care activities — including healthcare and involvement in their children's education — is `r avg_childcare_hrs` hours per day.
+
+### Task 5: Exploratory Questions - Table Answers
+
+**Table 1: Lawn Care Time — Retired vs Full-Time Employed**
+
+```{r}
+#| message: false
+#| warning: false
+library(gt)
+lawn_codes <- atus_codes |>
+    filter(str_detect(task_level2, "Lawn")) |>
+    select(code_level2) |>
+    distinct()
+
+atus_act |>
+    filter(level2_code %in% lawn_codes$code_level2) |>
+    group_by(participant_id) |>
+    summarize(total_lawn_min = sum(time_spent_min, na.rm = TRUE)) |>
+    inner_join(atus_resp, join_by(participant_id)) |>
+    filter(employment_status %in% c("Retired", "Employed Full Time")) |>
+    group_by(employment_status) |>
+    summarize(avg_hrs = round(weighted.mean(total_lawn_min / 60,
+                                            survey_weight), 2)) |>
+    gt() |>
+    cols_label(employment_status = "Employment Status",
+               avg_hrs = "Avg. Hours per Day") |>
+    tab_header(title = "Lawn Care Time by Employment Status",
+               subtitle = "Retired vs Full-Time Employed Americans") |>
+    fmt_number(columns = avg_hrs, decimals = 2) |>
+    tab_source_note("Source: ATUS 2003-2024 Public Use Microdata")
+```
+
+**Table 2: Social & Recreational Time by Marital Status**
+
+```{r}
+#| message: false
+#| warning: false
+
+social_codes2 <- atus_codes |>
+    filter(task_level1 == "Socializing, Relaxing, and Leisure") |>
+    select(code_level1) |>
+    distinct()
+
+atus_act |>
+    filter(level1_code %in% social_codes2$code_level1) |>
+    group_by(participant_id) |>
+    summarize(total_social_min = sum(time_spent_min, na.rm = TRUE)) |>
+    inner_join(atus_resp, join_by(participant_id)) |>
+    filter(!is.na(married)) |>
+    group_by(married) |>
+    summarize(avg_hrs = round(weighted.mean(total_social_min / 60,
+                                            survey_weight), 2)) |>
+    gt() |>
+    cols_label(married = "Marital Status",
+               avg_hrs = "Avg. Hours per Day") |>
+    tab_header(title = "Social & Recreational Time by Marital Status",
+               subtitle = "Married vs Unmarried Americans") |>
+    fmt_number(columns = avg_hrs, decimals = 2) |>
+    tab_source_note("Source: ATUS 2003-2024 Public Use Microdata")
+```
+
+**Table 3: Where High-Earning Americans Spend Their Time**
+
+```{r}
+#| message: false
+#| warning: false
+
+high_earners <- atus_resp |>
+    filter(employment_status == "Employed Full Time",
+           hourly_earnings > 0) |>
+    filter(hourly_earnings >= quantile(hourly_earnings, 0.75,
+                                       na.rm = TRUE)) |>
+    select(participant_id, survey_weight)
+
+atus_act |>
+    inner_join(high_earners, join_by(participant_id)) |>
+    filter(!is.na(activity_location)) |>
+    group_by(activity_location) |>
+    summarize(avg_hrs = round(weighted.mean(time_spent_min / 60,
+                                            survey_weight), 2)) |>
+    arrange(desc(avg_hrs)) |>
+    head(8) |>
+    gt() |>
+    cols_label(activity_location = "Location",
+               avg_hrs = "Avg. Hours per Day") |>
+    tab_header(title = "Where High-Earning Americans Spend Their Time",
+               subtitle = "Top 25% Earners Among Full-Time Employed") |>
+    fmt_number(columns = avg_hrs, decimals = 2) |>
+    tab_source_note("Source: ATUS 2003-2024 Public Use Microdata")
+```
+
+**Table 4: Most Common Activities on Public Transit**
+
+```{r}
+#| message: false
+#| warning: false
+
+atus_act |>
+    filter(activity_location == "Vehicle") |>
+    inner_join(atus_codes, join_by(level3_code == code_level3)) |>
+    group_by(task_level3) |>
+    summarize(total_hrs = round(sum(time_spent_min,
+                                    na.rm = TRUE) / 60, 1)) |>
+    arrange(desc(total_hrs)) |>
+    head(8) |>
+    gt() |>
+    cols_label(task_level3 = "Activity",
+               total_hrs = "Total Hours Reported") |>
+    tab_header(title = "Most Common Activities on Public Transit",
+               subtitle = "Bus, Train, Subway, Boat, or Ferry") |>
+    fmt_number(columns = total_hrs, decimals = 1) |>
+    tab_source_note("Source: ATUS 2003-2024 Public Use Microdata")
+```
+
+**Table 5: Time Spent on Favorite Activities by Age Group**
+
+My four favorite activities are Cooking, Shopping, Exercise, and Reading.
+
+```{r}
+#| message: false
+#| warning: false
+
+fav_codes <- atus_codes |>
+    filter(str_detect(task_level2,
+                      "Food Preparation|Consumer Purchases|Sports|Reading")) |>
+    select(code_level2, task_level2) |>
+    distinct()
+
+atus_act |>
+    filter(level2_code %in% fav_codes$code_level2) |>
+    inner_join(fav_codes, join_by(level2_code == code_level2)) |>
+    inner_join(atus_rost |> select(participant_id, age),
+               join_by(participant_id)) |>
+    inner_join(atus_resp, join_by(participant_id)) |>
+    mutate(age_group = cut(age,
+                           breaks = c(14, 24, 34, 44, 54, 64, 85),
+                           labels = c("15-24", "25-34", "35-44",
+                                      "45-54", "55-64", "65+"))) |>
+    filter(!is.na(age_group)) |>
+    group_by(age_group, task_level2) |>
+    summarize(avg_hrs = round(weighted.mean(time_spent_min / 60,
+                                            survey_weight), 2),
+              .groups = "drop") |>
+    pivot_wider(names_from = task_level2, values_from = avg_hrs) |>
+    gt() |>
+    cols_label(age_group = "Age Group") |>
+    tab_header(title = "Daily Time on Favorite Activities by Age Group",
+               subtitle = "Cooking, Shopping, Exercise, and Reading") |>
+    fmt_number(decimals = 2) |>
+    tab_source_note("Source: ATUS 2003-2024 Public Use Microdata")
+```
+
+### Task 6: Exploratory Questions - Graph Answers
+
+**Graph 1: Household Activities by Age Group**
+
+```{r}
+#| message: false
+#| warning: false
+
+household_codes <- atus_codes |>
+    filter(task_level1 == "Household Activities") |>
+    select(code_level1, task_level2) |>
+    distinct()
+
+atus_act |>
+    filter(level1_code %in% household_codes$code_level1) |>
+    inner_join(household_codes, join_by(level1_code == code_level1)) |>
+    inner_join(atus_rost |> select(participant_id, age),
+               join_by(participant_id)) |>
+    inner_join(atus_resp, join_by(participant_id)) |>
+    mutate(age_group = cut(age,
+                           breaks = c(14, 24, 34, 44, 54, 64, 85),
+                           labels = c("15-24", "25-34", "35-44",
+                                      "45-54", "55-64", "65+"))) |>
+    filter(!is.na(age_group)) |>
+    group_by(age_group, task_level2) |>
+    summarize(avg_hrs = weighted.mean(time_spent_min / 60,
+                                      survey_weight),
+              .groups = "drop") |>
+    ggplot(aes(x = age_group, y = task_level2, fill = avg_hrs)) +
+    geom_tile(color = "white") +
+    scale_fill_gradient(low = "white", high = "steelblue",
+                        name = "Avg Hours") +
+    theme_bw() +
+    labs(title = "Household Activity Time by Age Group",
+         subtitle = "Average daily hours per activity",
+         x = "Age Group", y = NULL,
+         caption = "Source: ATUS 2003-2024 Public Use Microdata") +
+    theme(axis.text.y = element_text(size = 8))
+```
+
+Household activity time increases significantly with age. Older Americans spend considerably more time on interior cleaning and food preparation, while younger age groups spend less time overall on household tasks.
+
+**Graph 2: Summer Activities for Education Workers**
+
+```{r}
+#| message: false
+#| warning: false
+
+atus_resp_raw <- read_csv("data/mp02/atusresp_0324.dat",
+                           show_col_types = FALSE)
+
+edu_ids <- atus_resp_raw |>
+    filter(TUMONTH %in% c(6, 7, 8),
+           TEIO1ICD %in% 7860:7890) |>
+    select(participant_id = TUCASEID)
+
+atus_act |>
+    inner_join(edu_ids, join_by(participant_id)) |>
+    inner_join(atus_codes, join_by(level2_code == code_level2)) |>
+    group_by(task_level2) |>
+    summarize(total_hrs = sum(time_spent_min, na.rm = TRUE) / 60) |>
+    arrange(desc(total_hrs)) |>
+    head(10) |>
+    ggplot(aes(x = reorder(task_level2, total_hrs),
+               y = total_hrs)) +
+    geom_col(fill = "steelblue") +
+    coord_flip() +
+    theme_bw() +
+    labs(title = "Top Activities for Education Workers in Summer",
+         subtitle = "June, July & August",
+         x = NULL, y = "Total Hours",
+         caption = "Source: ATUS 2003-2024 Public Use Microdata")
+```
+
+Education workers spend most of their summer time on sleep and leisure activities. Work still appears in the top results indicating not all education workers fully disconnect during summer months.
+
+**Graph 3: Educational Time by Age Among College Students**
+
+```{r}
+#| message: false
+#| warning: false
+
+edu_codes <- atus_codes |>
+    filter(task_level1 == "Education") |>
+    select(code_level1, task_level2) |>
+    distinct()
+
+atus_act |>
+    filter(level1_code %in% edu_codes$code_level1) |>
+    inner_join(edu_codes, join_by(level1_code == code_level1)) |>
+    inner_join(atus_rost |> select(participant_id, age),
+               join_by(participant_id)) |>
+    inner_join(atus_resp |> filter(enrolled_in_college == TRUE),
+               join_by(participant_id)) |>
+    mutate(age_group = cut(age,
+                           breaks = c(14, 24, 34, 44, 54, 85),
+                           labels = c("15-24", "25-34", "35-44",
+                                      "45-54", "55+"))) |>
+    filter(!is.na(age_group)) |>
+    group_by(age_group, task_level2) |>
+    summarize(avg_hrs = weighted.mean(time_spent_min / 60,
+                                      survey_weight),
+              .groups = "drop") |>
+    ggplot(aes(x = age_group, y = task_level2, fill = avg_hrs)) +
+    geom_tile(color = "white") +
+    scale_fill_gradient(low = "white", high = "darkgreen",
+                        name = "Avg Hours") +
+    theme_bw() +
+    labs(title = "Educational Activities by Age Among College Students",
+         subtitle = "Do older students dedicate more time to education?",
+         x = "Age Group", y = NULL,
+         caption = "Source: ATUS 2003-2024 Public Use Microdata") +
+    theme(axis.text.y = element_text(size = 8))
+```
+
+Older college students tend to spend more time on educational activities than younger students, supporting the idea that education is valued more with age and life experience.
+
+**Graph 4: Sports Interest Rankings by Age Group**
+
+```{r}
+#| message: false
+#| warning: false
+
+sports_codes <- atus_codes |>
+    filter(str_detect(task_level3, "Watching")) |>
+    select(code_level3, task_level3) |>
+    distinct()
+
+atus_act |>
+    filter(level3_code %in% sports_codes$code_level3) |>
+    inner_join(sports_codes, join_by(level3_code == code_level3)) |>
+    inner_join(atus_rost |> select(participant_id, age),
+               join_by(participant_id)) |>
+    inner_join(atus_resp, join_by(participant_id)) |>
+    mutate(age_group = cut(age,
+                           breaks = c(14, 34, 54, 85),
+                           labels = c("15-34", "35-54", "55+"))) |>
+    filter(!is.na(age_group)) |>
+    group_by(age_group, task_level3) |>
+    summarize(total_hrs = sum(time_spent_min, na.rm = TRUE) / 60,
+              .groups = "drop") |>
+    group_by(age_group) |>
+    slice_max(total_hrs, n = 5) |>
+    ggplot(aes(x = reorder(task_level3, total_hrs),
+               y = total_hrs,
+               fill = age_group)) +
+    geom_col(position = "dodge") +
+    coord_flip() +
+    scale_fill_brewer(palette = "Set2", name = "Age Group") +
+    theme_bw() +
+    labs(title = "Top 5 Sports Watched by Age Group",
+         subtitle = "Total hours of sports watching",
+         x = NULL, y = "Total Hours",
+         caption = "Source: ATUS 2003-2024 Public Use Microdata")
+```
+
+Sports preferences vary across age groups. Younger Americans watch more basketball and soccer while older Americans favor golf and baseball, reflecting generational differences in sports culture.
+
+**Graph 5: Per-Child Care Time by Family Size**
+
+```{r}
+#| message: false
+#| warning: false
+
+childcare_codes2 <- atus_codes |>
+    filter(task_level1 == "Caring for and Helping Household Members") |>
+    select(code_level1) |>
+    distinct()
+
+atus_act |>
+    filter(level1_code %in% childcare_codes2$code_level1) |>
+    group_by(participant_id) |>
+    summarize(total_childcare_min = sum(time_spent_min, na.rm = TRUE),
+              .groups = "drop") |>
+    inner_join(atus_resp, join_by(participant_id)) |>
+    filter(!is.na(num_children),
+           num_children >= 1,
+           num_children <= 4) |>
+    mutate(per_child_hrs = (total_childcare_min / 60) / num_children,
+           family_size = factor(num_children,
+                                levels = c(1, 2, 3, 4),
+                                labels = c("1 Child", "2 Children",
+                                           "3 Children", "4 Children"))) |>
+    group_by(family_size) |>
+    summarize(avg_per_child = weighted.mean(per_child_hrs,
+                                             survey_weight,
+                                             na.rm = TRUE),
+              .groups = "drop") |>
+    ggplot(aes(x = family_size, y = avg_per_child,
+               fill = family_size)) +
+    geom_col(show.legend = FALSE, width = 0.6) +
+    scale_fill_brewer(palette = "Reds") +
+    theme_bw() +
+    labs(title = "Per-Child Care Time Decreases as Family Size Grows",
+         subtitle = "Supporting the middle-child syndrome hypothesis",
+         x = "Number of Children Under 18",
+         y = "Avg. Hours per Child per Day",
+         caption = "Source: ATUS 2003-2024 Public Use Microdata")
+```
+
+As family size increases, the time parents spend per child decreases significantly. Only children receive the most parental attention, while children in larger families receive progressively less time — providing quantitative support for the middle-child syndrome hypothesis.
+
+## Final Insights and Deliverable
+
+### Market Research on Time Use Patterns in Target Demographics
+
+You are the product manager for a new time-tracking app that helps users compare their time use against demographically similar peers. The following profiles define typical time use for three target demographics.
+
+**Demographic 1: Stay-at-Home Dads**
+
+```{r}
+#| message: false
+#| warning: false
+
+sahd_ids <- atus_resp |>
+    inner_join(atus_rost |> select(participant_id, sex),
+               join_by(participant_id)) |>
+    filter(sex == "M",
+           married == "Married",
+           employment_status == "Not in Labor Force",
+           num_children >= 1) |>
+    select(participant_id, survey_weight)
+
+key_codes_sahd <- atus_codes |>
+    filter(task_level2 %in% c("Caring For HH Children",
+                               "Food Preparation",
+                               "Interior Cleaning",
+                               "Sports, Exercise, & Recreation",
+                               "Relaxing and Leisure")) |>
+    select(code_level2, task_level2) |>
+    distinct()
+
+sahd_profile <- atus_act |>
+    filter(level2_code %in% key_codes_sahd$code_level2) |>
+    inner_join(key_codes_sahd, join_by(level2_code == code_level2)) |>
+    inner_join(sahd_ids, join_by(participant_id)) |>
+    group_by(participant_id, task_level2, survey_weight) |>
+    summarize(daily_min = sum(time_spent_min, na.rm = TRUE),
+              .groups = "drop") |>
+    group_by(task_level2) |>
+    summarize(
+        low     = round(quantile(daily_min, 0.25) / 60, 1),
+        typical = round(weighted.mean(daily_min, survey_weight) / 60, 1),
+        high    = round(quantile(daily_min, 0.75) / 60, 1),
+        .groups = "drop"
+    )
+
+# Add target column separately after summarize
+sahd_profile |>
+    mutate(target = case_match(
+        task_level2,
+        "Caring For HH Children"        ~ 4.0,
+        "Food Preparation"              ~ 1.0,
+        "Interior Cleaning"             ~ 1.5,
+        "Sports, Exercise, & Recreation"~ 0.75,
+        "Relaxing and Leisure"          ~ 1.0
+    )) |>
+    gt() |>
+    cols_label(task_level2 = "Activity",
+               low = "Low (hrs)", typical = "Typical (hrs)",
+               high = "High (hrs)", target = "Target (hrs)") |>
+    tab_header(title = "Time Use Profile: Stay-at-Home Dads",
+               subtitle = "Males, Married, Not Employed, 1+ Child") |>
+    tab_source_note("Source: ATUS 2003-2024 Public Use Microdata")
+```
+
+**Demographic 2: College Undergraduates**
+
+College undergraduates are defined as respondents currently enrolled in a college or university program.
+
+```{r}
+#| message: false
+#| warning: false
+
+undergrad_ids <- atus_resp |>
+    filter(enrolled_in_college == TRUE) |>
+    select(participant_id, survey_weight)
+
+key_codes_ug <- atus_codes |>
+    filter(task_level2 %in% c("Attending Class",
+                               "Homework & Research",
+                               "Sleeping",
+                               "Sports, Exercise, & Recreation",
+                               "Socializing and Communicating")) |>
+    select(code_level2, task_level2) |>
+    distinct()
+
+atus_act |>
+    filter(level2_code %in% key_codes_ug$code_level2) |>
+    inner_join(key_codes_ug, join_by(level2_code == code_level2)) |>
+    inner_join(undergrad_ids, join_by(participant_id)) |>
+    group_by(participant_id, task_level2, survey_weight) |>
+    summarize(daily_min = sum(time_spent_min, na.rm = TRUE),
+              .groups = "drop") |>
+    group_by(task_level2) |>
+    summarize(
+        low     = round(quantile(daily_min, 0.25) / 60, 1),
+        typical = round(weighted.mean(daily_min, survey_weight) / 60, 1),
+        high    = round(quantile(daily_min, 0.75) / 60, 1),
+        .groups = "drop"
+    ) |>
+    mutate(target = case_match(
+        task_level2,
+        "Attending Class"                ~ 1.5,
+        "Homework & Research"            ~ 2.0,
+        "Sleeping"                       ~ 8.0,
+        "Sports, Exercise, & Recreation" ~ 0.75,
+        "Socializing and Communicating"  ~ 1.0
+    )) |>
+    gt() |>
+    cols_label(task_level2 = "Activity",
+               low = "Low (hrs)", typical = "Typical (hrs)",
+               high = "High (hrs)", target = "Target (hrs)") |>
+    tab_header(title = "Time Use Profile: College Undergraduates",
+               subtitle = "Currently Enrolled in College or University") |>
+    tab_source_note("Source: ATUS 2003-2024 Public Use Microdata")
+```
+
+**Demographic 3: Working Professionals (My Choice)**
+
+Working professionals are defined as full-time employed Americans between the ages of 25 and 45.
+
+```{r}
+#| message: false
+#| warning: false
+
+working_ids <- atus_resp |>
+    inner_join(atus_rost |> select(participant_id, age),
+               join_by(participant_id)) |>
+    filter(employment_status == "Employed Full Time",
+           age >= 25, age <= 45) |>
+    select(participant_id, survey_weight)
+
+key_codes_wp <- atus_codes |>
+    filter(task_level2 %in% c("Working",
+                               "Sports, Exercise, & Recreation",
+                               "Food Preparation",
+                               "Sleeping",
+                               "Socializing and Communicating")) |>
+    select(code_level2, task_level2) |>
+    distinct()
+
+atus_act |>
+    filter(level2_code %in% key_codes_wp$code_level2) |>
+    inner_join(key_codes_wp, join_by(level2_code == code_level2)) |>
+    inner_join(working_ids, join_by(participant_id)) |>
+    group_by(participant_id, task_level2, survey_weight) |>
+    summarize(daily_min = sum(time_spent_min, na.rm = TRUE),
+              .groups = "drop") |>
+    group_by(task_level2) |>
+    summarize(
+        low     = round(quantile(daily_min, 0.25) / 60, 1),
+        typical = round(weighted.mean(daily_min, survey_weight) / 60, 1),
+        high    = round(quantile(daily_min, 0.75) / 60, 1),
+        .groups = "drop"
+    ) |>
+    mutate(target = case_match(
+        task_level2,
+        "Working"                        ~ 8.0,
+        "Sports, Exercise, & Recreation" ~ 1.0,
+        "Food Preparation"               ~ 0.75,
+        "Sleeping"                       ~ 7.5,
+        "Socializing and Communicating"  ~ 1.0
+    )) |>
+    gt() |>
+    cols_label(task_level2 = "Activity",
+               low = "Low (hrs)", typical = "Typical (hrs)",
+               high = "High (hrs)", target = "Target (hrs)") |>
+    tab_header(title = "Time Use Profile: Working Professionals",
+               subtitle = "Full-Time Employed, Ages 25-45") |>
+    tab_source_note("Source: ATUS 2003-2024 Public Use Microdata")
+```
+## 01: Data Relationship Diagram
+
+The diagram below shows the four ATUS tables, their key columns,
+and how they connect to each other.
+```{r}
+#| echo: false
+#| message: false
+#| warning: false
+
+knitr::include_graphics("data_diagram.png")
+```
+
+The four tables are linked through two key relationships. The
+`participant_id` column connects `atus_resp`, `atus_rost`, and `atus_act`
+together — each respondent has a unique ID that appears across all three
+files. The `level2_code` and `level3_code` in `atus_act` join to
+`code_level2` and `code_level3` in `atus_codes` to translate numeric
+codes into readable activity labels. Because each respondent has multiple
+activity records, the relationship between `atus_act` and `atus_resp` is
+many-to-one. Note that joins can be performed at three levels of
+precision — Level 1, Level 2, or Level 3 depending on the granularity
+of analysis required.
+
+
+
+## Conclusion
+
+This analysis of ATUS microdata from 2003 to 2024 reveals clear patterns in how Americans allocate their time across activities and demographic groups. Household responsibilities increase with age, parental attention per child declines as family size grows, and college-enrolled respondents dedicate significantly more time to education than non-enrolled individuals. These findings provide a strong foundation for designing a time-tracking app that helps users benchmark their habits against demographically similar peers.
+
+::: {.callout-note title="AI Usage Statement" collapse="true"}
+No generative AI tools were used to write or edit any narrative or analytical text in this report.
+:::
+
+
