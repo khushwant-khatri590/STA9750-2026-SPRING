@@ -1,0 +1,50 @@
+dhwanikan:
+  evaluator: khushwant-khatri590
+  teammate: dhwanikan
+  n_questions: 5
+  questions:
+    OQ: 5
+    SQ: 5
+    DS: 5
+    RR: 4
+    PR: 4
+  overall_comments:
+    positive: Her Contribution
+    negative: Making understand some points
+    advice: listen for other team members
+    instructor: 'no'
+  cycle: mid
+felisita101:
+  evaluator: khushwant-khatri590
+  teammate: felisita101
+  n_questions: 5
+  questions:
+    OQ: 5
+    SQ: 5
+    DS: 5
+    RR: 5
+    PR: 4
+  overall_comments:
+    positive: Good Researcher
+    negative: Enthusiastic
+    advice: Be on time
+    instructor: 'no'
+  cycle: mid
+helly101-1:
+  evaluator: khushwant-khatri590
+  teammate: helly101-1
+  n_questions: 5
+  questions:
+    OQ: 5
+    SQ: 5
+    DS: 5
+    RR: 5
+    PR: 5
+  overall_comments:
+    positive: Seriousness and sincerity towards work
+    negative: NA
+    advice: Proactive communication
+    instructor: 'no'
+  cycle: mid
+evaluator: khushwant-khatri590
+

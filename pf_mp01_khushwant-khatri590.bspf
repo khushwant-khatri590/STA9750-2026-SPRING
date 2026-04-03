@@ -1,0 +1,166 @@
+
+peer_feedback_assignment_1:
+  issue_number: 31
+  issue_owner: raulsolanavarro
+  issue_ok: no
+  issue_status: Could not locate your AI Usage Statement - '.callout-note' block title
+    incorrect.
+  overall_comments:
+    positive: |-
+      systematic way of using all the codes
+      no
+    negative: overall its good
+    advice: everything is good no extra steps needed
+  scores:
+    Written Communication:
+      score: 10.0
+      comment: Highlighted and context explained properly
+    Project Skeleton:
+      score: 10.0
+      comment: It has responded to all the ranges task.
+    Tables & Document Presentation:
+      score: 10.0
+      comment: format is in good quality and visualizations are clear
+    Data Visualization:
+      score: 10.0
+      comment: DEFAULT SCORE
+    Exploratory Data Analysis:
+      score: 10.0
+      comment: DEFAULT SCORE
+    Code Quality:
+      score: 10.0
+      comment: Codes used efficiently and they are clear for the analyses
+    Data Preparation:
+      score: 10.0
+      comment: DEFAULT SCORE
+    Analysis and Findings:
+      score: 10.0
+      comment: insights and quality of work done provide very good insights
+    Extra Credit:
+      score: 1.0
+      comment: for completing work on time and meeting all the requirements
+  mp_number: 1.0
+peer_feedback_assignment_2:
+  issue_number: .na.integer
+  issue_owner: .na.character
+  issue_ok: .na
+  issue_status: .na.character
+  overall_comments:
+    positive: .na.character
+    negative: .na.character
+    advice: .na.character
+  scores:
+    Written Communication:
+      score: .na.integer
+      comment: .na.character
+    Project Skeleton:
+      score: .na.integer
+      comment: .na.character
+    Tables & Document Presentation:
+      score: .na.integer
+      comment: .na.character
+    Data Visualization:
+      score: .na.integer
+      comment: .na.character
+    Exploratory Data Analysis:
+      score: .na.integer
+      comment: .na.character
+    Code Quality:
+      score: .na.integer
+      comment: .na.character
+    Data Preparation:
+      score: .na.integer
+      comment: .na.character
+    Analysis and Findings:
+      score: .na.integer
+      comment: .na.character
+    Extra Credit:
+      score: .na.integer
+      comment: .na.character
+  mp_number: 1.0
+peer_feedback_assignment_3:
+  issue_number: 37
+  issue_owner: mclycke
+  issue_ok: yes
+  issue_status: OK
+  overall_comments:
+    positive: everything was completed at the base requirement
+    negative: By adding little more ideas to the work
+    advice: by finding some different ways to express and explore ays to make it even
+      more better
+  scores:
+    Written Communication:
+      score: 8.0
+      comment: little bit lack of context other then that excellent
+    Project Skeleton:
+      score: 10.0
+      comment: Codes are completed according to the professor's requirements
+    Tables & Document Presentation:
+      score: 7.0
+      comment: Presentation of data while formatting table content seems some error
+        in figures
+    Data Visualization:
+      score: 10.0
+      comment: DEFAULT SCORE
+    Exploratory Data Analysis:
+      score: 10.0
+      comment: DEFAULT SCORE
+    Code Quality:
+      score: 10.0
+      comment: the quality of the code is excellent and meet the requirement for the
+        analyses
+    Data Preparation:
+      score: 10.0
+      comment: DEFAULT SCORE
+    Analysis and Findings:
+      score: 10.0
+      comment: Flashes the insight and quality of work
+    Extra Credit:
+      score: 0.0
+      comment: Because the candidate haven't showen any extra uncommon qualities in
+        visualization
+  mp_number: 1.0
+peer_feedback_assignment_4:
+  issue_number: 41
+  issue_owner: monica-phan26
+  issue_ok: yes
+  issue_status: OK
+  overall_comments:
+    positive: the candidate has used and explained in very good way and tried different
+      ideas
+    negative: best work done
+    advice: No extra improvement needed
+  scores:
+    Written Communication:
+      score: 10.0
+      comment: Reports are good, highlights context and meet the references related
+        to work
+    Project Skeleton:
+      score: 10.0
+      comment: Codes completes the required task and the responses are creative
+    Tables & Document Presentation:
+      score: 10.0
+      comment: the document looks flawless and have used advanced feature in formatting
+        and visualization
+    Data Visualization:
+      score: 10.0
+      comment: DEFAULT SCORE
+    Exploratory Data Analysis:
+      score: 10.0
+      comment: DEFAULT SCORE
+    Code Quality:
+      score: 10.0
+      comment: Code Passes alll the analyses and are clear
+    Data Preparation:
+      score: 10.0
+      comment: DEFAULT SCORE
+    Analysis and Findings:
+      score: 10.0
+      comment: insights and quality of finding has an insights
+    Extra Credit:
+      score: 5.0
+      comment: for doing exceptionally well in documentation, visualization and neat
+        coding
+  mp_number: 1.0
+evaluator: khushwant-khatri590
+
