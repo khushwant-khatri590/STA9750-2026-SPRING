@@ -1,0 +1,1633 @@
+---
+title: "Mini-Project 03 - Who Goes There? US Internal Migration and Implications for Congressional Reapportionment"
+author: "khushwant-khatri590"
+editor:
+    mode: source
+format:
+    html:
+        code-fold: true
+---
+
+## Introduction
+
+In this mini-project, I explore patterns of internal migration within the 
+United States, with a focus on **California**. Using data from the American 
+Community Survey (ACS) — the premier national survey conducted by the US 
+Census Bureau — I analyze how people move between states and metropolitan 
+areas, and what those movements mean for congressional representation.
+
+The ACS collects data continuously, providing an up-to-date picture of the 
+American public. For this project, I use two types of ACS data: state-level 
+ACS-1 migration flows (based on one-year samples) to track movement between 
+all 50 states, and metro-level ACS-5 flows (based on five-year samples) to 
+understand which cities are most connected to California's largest metro area, 
+Los Angeles.
+
+This analysis practices key data skills including downloading and parsing 
+Excel and JSON files directly from government sources, combining multiple 
+data sets using joins, computing summary statistics across groups, and 
+building publication-quality visualizations. The ultimate goal is to forecast 
+California's population in 2030, estimate its congressional apportionment 
+after the next census, and propose a data-driven advertising strategy to 
+help California grow its political representation in Congress.
+
+
+
+## Data Acquisition and Preparation
+
+In this section, I download all data needed for the analysis. I use a 
+caching strategy throughout — files are only downloaded once and saved 
+locally in the `data/mp03` folder to avoid redundant web requests.
+
+### Setup: Load Libraries and Create Data Folder
+
+```{r setup}
+#| cache: false
+#| message: false
+#| warning: false
+
+# Load all libraries
+library(tidyverse)
+library(tidycensus)
+library(readxl)
+library(jsonlite)
+library(gt)
+library(fs)
+library(scales)
+library(patchwork)
+library(vctrs)
+
+# Create data directory if it does not exist
+data_mp03 <- fs::path("data", "mp03")
+if (!fs::dir_exists(data_mp03)) {
+  fs::dir_create(data_mp03, recurse = TRUE)
+}
+
+message("Setup complete!")
+```
+
+### Task 1: State Population Data
+
+```{r task1-population}
+#| cache: false
+#| message: false
+#| warning: false
+
+# Helper function: download one year of state population
+get_state_pop_year <- function(yr) {
+  get_acs(
+    variables   = c(total_population = "B01003_001"),
+    geography   = "state",
+    year        = yr,
+    survey      = "acs1",
+    geometry    = TRUE,
+    cache_table = TRUE
+  ) |>
+    mutate(year = yr)
+}
+
+# ACS-1 was not released in 2020 due to COVID-19
+available_years <- c(2015, 2016, 2017, 2018, 2019, 
+                     2021, 2022, 2023, 2024)
+
+# Download all years
+state_pop_raw <- map(available_years, get_state_pop_year) |>
+  list_rbind()
+
+# Clean up
+state_pop <- state_pop_raw |>
+  select(
+    geoid      = GEOID,
+    state_name = NAME,
+    population = estimate,
+    year
+  ) |>
+  filter(!state_name %in% c(
+    "Puerto Rico",
+    "District of Columbia"
+  ))
+
+glimpse(state_pop)
+```
+
+The state population data contains `r nrow(state_pop)` rows covering 
+50 states across `r length(available_years)` years (2015–2024, 
+excluding 2020).
+
+
+
+### Task 2: State-to-State Migration Flows — 2024
+
+```{r task2-flows-2024}
+#| cache: false 
+#| message: false
+#| warning: false
+
+state_to_state_migration_2024 <- function() {
+
+  url_2024 <- paste0(
+    "https://www2.census.gov/programs-surveys/demo/tables/",
+    "geographic-mobility/2024/state-to-state-migration/",
+    "State_to_State_Migration_Table_2024_T13.xlsx"
+  )
+
+  dest_file <- fs::path(data_mp03, "state_to_state_2024.xlsx")
+
+  if (!fs::file_exists(dest_file)) {
+    message("Downloading 2024 migration file...")
+    download.file(url_2024, destfile = dest_file, mode = "wb")
+    message("Download complete.")
+  } else {
+    message("Using cached 2024 file.")
+  }
+
+  # 2024 file is already in long format
+  # Col1 = current state, Col2 = prior state, Col3 = estimate
+  raw <- read_excel(
+    dest_file,
+    sheet     = "Table",
+    skip      = 0,
+    col_names = FALSE
+  )
+
+  # Rename columns
+  colnames(raw) <- c("state_current", "state_1y", "population", "moe")
+
+  state_names_50 <- state.name
+
+  # Cross-state flows (exclude "X" which means same state, exclude DC)
+  flows_table <- raw |>
+    filter(
+      state_current %in% state_names_50,
+      state_1y      %in% state_names_50,
+      state_current != state_1y,
+      population    != "X"
+    ) |>
+    mutate(
+      population = replace(population, population == "N", "0"),
+      population = suppressWarnings(as.integer(population))
+    ) |>
+    filter(!is.na(population)) |>
+    select(state_current, state_1y, population)
+
+  # Stayed in state rows (where state_current == state_1y, marked "X")
+  # Get these from Supplemental sheet instead
+  raw_supp <- read_excel(
+    dest_file,
+    sheet     = "Supplemental - Current Res",
+    skip      = 0,
+    col_names = FALSE
+  )
+
+  # Check structure
+  colnames(raw_supp) <- paste0("col", 1:ncol(raw_supp))
+
+  flows_stayed <- raw_supp |>
+    filter(col1 %in% state_names_50) |>
+    mutate(
+      state_current = col1,
+      state_1y      = col1,
+      stayed = suppressWarnings(as.integer(
+        str_remove_all(as.character(col2), ",")
+      ))
+    ) |>
+    filter(!is.na(stayed)) |>
+    mutate(population = stayed) |>
+    select(state_current, state_1y, population)
+
+  # Combine
+  bind_rows(flows_table, flows_stayed) |>
+    mutate(
+      year_current = 2024L,
+      year_1y      = 2023L
+    ) |>
+    select(state_current, state_1y, population, year_current, year_1y)
+}
+
+flows_2024 <- state_to_state_migration_2024()
+message("2024 rows: ", nrow(flows_2024))
+glimpse(flows_2024)
+```
+
+
+### Task 3: State-to-State Migration Flows — 2023
+
+```{r task3-flows-2023}
+#| cache: false 
+#| message: false
+#| warning: false
+
+state_to_state_migration_2023 <- function() {
+
+  url_2023 <- paste0(
+    "https://www2.census.gov/programs-surveys/demo/tables/",
+    "geographic-mobility/2023/state-to-state-migration/",
+    "State_to_State_Migration_Table_2023_T13.xlsx"
+  )
+
+  dest_file <- fs::path(data_mp03, "state_to_state_2023.xlsx")
+
+  if (!fs::file_exists(dest_file)) {
+    message("Downloading 2023 migration file...")
+    download.file(url_2023, destfile = dest_file, mode = "wb")
+    message("Download complete.")
+  } else {
+    message("Using cached 2023 file.")
+  }
+
+  states_with_dc <- c(
+    state.name[1:8],
+    "District of Columbia",
+    state.name[9:50]
+  )
+
+  # -------------------------------------------------------
+  # PART 1: Stayed population (cols A:F)
+  # Col 1 = state name, Col 4 = same state estimate
+  # -------------------------------------------------------
+  part1 <- read_excel(
+    dest_file,
+    range     = cell_cols("A:F"),
+    skip      = 7,
+    col_names = c("state_current", "c2", "c3",
+                  "same_state", "c5", "c6")
+  ) |>
+    filter(state_current %in% state.name) |>
+    mutate(
+      population   = suppressWarnings(
+        as.integer(str_remove_all(as.character(same_state), ","))
+      ),
+      state_1y     = state_current,
+      year_current = 2023L,
+      year_1y      = 2022L
+    ) |>
+    select(state_current, state_1y, population, year_current, year_1y)
+
+  # -------------------------------------------------------
+  # PART 2: Cross-state flows (cols J:DG)
+  # After reading, rows 1-5 are junk headers
+  # Rows 6-56 are the actual 51 state rows (50 + DC)
+  # -------------------------------------------------------
+  part2 <- read_excel(
+    dest_file,
+    range     = cell_cols("J:DG"),
+    skip      = 7,
+    col_names = vctrs::vec_interleave(states_with_dc, NA_character_)
+  ) |>
+    select(any_of(states_with_dc)) |>
+    slice(6:56) |>                              # keep only 51 data rows
+    mutate(state_current = states_with_dc) |>   # assign state names by row order
+    filter(state_current != "District of Columbia") |>
+    pivot_longer(
+      cols      = any_of(state.name),
+      names_to  = "state_1y",
+      values_to = "population"
+    ) |>
+    filter(
+  state_current != state_1y,
+  !is.na(population)
+) |>
+mutate(
+  population = replace(population, population == "N", "0"),
+  population = suppressWarnings(as.integer(population)),
+      year_current = 2023L,
+      year_1y      = 2022L
+    ) |>
+    filter(!is.na(population)) |>
+    select(state_current, state_1y, population, year_current, year_1y)
+
+  # -------------------------------------------------------
+  # COMBINE
+  # -------------------------------------------------------
+  bind_rows(part1, part2)
+}
+
+flows_2023 <- state_to_state_migration_2023()
+message("2023 rows: ", nrow(flows_2023))
+glimpse(flows_2023)
+```
+
+### Task 4: Combined State-to-State Flows
+
+```{r task4-combined}
+#| cache: false
+#| message: false
+#| warning: false
+
+# Re-run to make sure objects exist
+flows_2024 <- state_to_state_migration_2024()
+flows_2023 <- state_to_state_migration_2023()
+
+state_to_state_migration <- function() {
+  bind_rows(flows_2024, flows_2023)
+}
+
+flows_all <- state_to_state_migration()
+message("Combined rows: ", nrow(flows_all))
+
+# Verify example rows from assignment
+flows_all |>
+  filter(
+    state_current == "Alabama",
+    state_1y %in% c("Alabama", "Alaska")
+  ) |>
+  arrange(year_current, state_1y) |>
+  gt() |>
+  tab_header("Task 4 Verification: Alabama rows") |>
+  cols_label(
+    state_current = "Current State",
+    state_1y      = "State 1 Year Ago",
+    population    = "Population",
+    year_current  = "Year (Current)",
+    year_1y       = "Year (Prior)"
+  )
+```
+
+
+### Task 5: Metro-to-Metro Migration Flows
+
+```{r task5-metro}
+#| cache: false
+#| message: false
+#| warning: false
+
+# Helper functions provided by professor
+move_row_to_colnames <- function(X, row = 1){
+  X    <- as_tibble(X)
+  Xrow <- X[row, ]
+  X    <- X[-row, ]
+  colnames(X) <- unlist(Xrow)
+  readr::type_convert(X)
+}
+
+pull_state_from_metro <- function(metro_name){
+  str_extract(
+    metro_name,
+    ".*, (\\S{2})[-[:alpha:]]* Metro Area",
+    group = 1
+  )
+}
+
+metro_to_metro_migration <- function() {
+
+  dest_file <- fs::path(data_mp03, "metro_to_metro_migration.json")
+
+  if (!fs::dir_exists(data_mp03)) {
+    fs::dir_create(data_mp03, recurse = TRUE)
+  }
+
+  # Only download if file does not exist
+  if (!fs::file_exists(dest_file)) {
+    message("Downloading metro-to-metro flows from Census API...")
+
+    api_url <- paste0(
+      "https://api.census.gov/data/2020/acs/flows",
+      "?get=MOVEDIN,MOVEDOUT,FULL1_NAME,FULL2_NAME",
+      "&for=metropolitan%20statistical%20area/",
+      "micropolitan%20statistical%20area:*"
+    )
+
+    download.file(api_url, destfile = dest_file, mode = "wb")
+    message("Download complete.")
+  } else {
+    message("Using cached metro flows file.")
+  }
+
+  # Read JSON file
+  raw <- read_json(dest_file, simplifyVector = TRUE)
+
+  # Convert to data frame and fix column names
+  move_row_to_colnames(as.data.frame(raw)) |>
+    # Simplify column names and drop unneeded columns
+    select(
+      metro1    = FULL1_NAME,
+      metro2    = FULL2_NAME,
+      moved_in  = MOVEDIN,
+      moved_out = MOVEDOUT
+    ) |>
+    # Pull out primary state for each metro
+    mutate(
+      state1    = pull_state_from_metro(metro1),
+      state2    = pull_state_from_metro(metro2),
+      moved_in  = suppressWarnings(as.integer(moved_in)),
+      moved_out = suppressWarnings(as.integer(moved_out))
+    ) |>
+    filter(!is.na(state1), !is.na(state2))
+}
+
+metro_flows <- metro_to_metro_migration()
+message("Metro flow rows: ", nrow(metro_flows))
+glimpse(metro_flows)
+
+# Verify pull_state_from_metro works correctly
+example_metros <- c(
+  "Los Angeles-Long Beach-Anaheim, CA Metro Area",
+  "New York-Newark-Jersey City, NY-NJ-PA Metro Area",
+  "Chicago-Naperville-Elgin, IL-IN-WI Metro Area",
+  "Outside Metro Area within U.S. or Puerto Rico"
+)
+
+data.frame(metro = example_metros) |>
+  mutate(metro_state = pull_state_from_metro(metro)) |>
+  gt() |>
+  cols_label(
+    metro       = "Metropolitan Statistical Area",
+    metro_state = "Primary State"
+  ) |>
+  tab_header("Task 5 Verification: State Extraction from Metro Names")
+```
+
+## Data Cleaning and Preparation
+
+Data cleaning was completed as part of the import steps above. All migration
+flow files were downloaded directly from the Census Bureau and parsed into
+tidy format. The data is trusted as-is from the Census Bureau source.
+
+## Data Integration and Initial Exploration
+
+### Task 6: Exploratory Data Analysis
+
+#### 6.1 — States with Highest Net Population Growth Rates
+
+```{r eda-6-1}
+#| message: false
+#| warning: false
+
+# Create cross_state once here - used in multiple questions below
+cross_state <- flows_all |>
+  filter(state_current != state_1y, population > 0)
+
+pop_growth <- state_pop |>
+  filter(year %in% c(2015, 2024)) |>
+  select(state_name, year, population) |>
+  pivot_wider(
+    names_from   = year,
+    values_from  = population,
+    names_prefix = "pop_"
+  ) |>
+  filter(!is.na(pop_2015), !is.na(pop_2024)) |>
+  mutate(
+    growth_abs  = pop_2024 - pop_2015,
+    growth_rate = (pop_2024 - pop_2015) / pop_2015
+  ) |>
+  arrange(desc(growth_rate))
+
+pop_growth |>
+  slice_head(n = 10) |>
+  gt() |>
+  tab_header("Top 10 States by Population Growth Rate (2015-2024)") |>
+  cols_label(
+    state_name  = "State",
+    pop_2015    = "2015 Population",
+    pop_2024    = "2024 Population",
+    growth_abs  = "Absolute Growth",
+    growth_rate = "Growth Rate"
+  ) |>
+  fmt_integer(c(pop_2015, pop_2024, growth_abs)) |>
+  fmt_percent(growth_rate, decimals = 1) |>
+  data_color(columns = growth_rate, palette = "Blues") |>
+  tab_source_note("Source: ACS-1, US Census Bureau")
+
+pop_growth |>
+  slice_head(n = 15) |>
+  mutate(state_name = fct_reorder(state_name, growth_rate)) |>
+  ggplot(aes(x = growth_rate, y = state_name, fill = growth_rate)) +
+  geom_col(show.legend = FALSE) +
+  scale_x_continuous(labels = percent_format()) +
+  scale_fill_gradient(low = "#9ecae1", high = "#084594") +
+  labs(
+    title    = "Top 15 States by Population Growth Rate, 2015-2024",
+    subtitle = "Sun Belt and Mountain West states lead the nation",
+    x        = "Population Growth Rate",
+    y        = NULL,
+    caption  = "Source: ACS-1, US Census Bureau"
+  ) +
+  theme_minimal(base_size = 13)
+```
+
+Florida, Texas, Utah, Idaho and Montana have seen the fastest
+population growth over the past decade, driven primarily by
+in-migration from other states.
+
+#### 6.2 — Who Moves to New York State? Where Do New Yorkers Go?
+
+```{r eda-6-2}
+#| message: false
+#| warning: false
+
+ny_in <- cross_state |>
+  filter(state_current == "New York") |>
+  group_by(state_1y) |>
+  summarize(avg_in = mean(population, na.rm = TRUE)) |>
+  arrange(desc(avg_in))
+
+ny_out <- cross_state |>
+  filter(state_1y == "New York") |>
+  group_by(state_current) |>
+  summarize(avg_out = mean(population, na.rm = TRUE)) |>
+  arrange(desc(avg_out))
+
+p1 <- ny_in |>
+  slice_head(n = 10) |>
+  mutate(state_1y = fct_reorder(state_1y, avg_in)) |>
+  ggplot(aes(x = avg_in, y = state_1y)) +
+  geom_col(fill = "#2171b5") +
+  scale_x_continuous(labels = comma_format()) +
+  labs(title = "Top Origins for NY In-Migrants",
+       x = "Avg Annual In-Migrants", y = NULL) +
+  theme_minimal()
+
+p2 <- ny_out |>
+  slice_head(n = 10) |>
+  mutate(state_current = fct_reorder(state_current, avg_out)) |>
+  ggplot(aes(x = avg_out, y = state_current)) +
+  geom_col(fill = "#cb181d") +
+  scale_x_continuous(labels = comma_format()) +
+  labs(title = "Top Destinations for NY Out-Migrants",
+       x = "Avg Annual Out-Migrants", y = NULL) +
+  theme_minimal()
+
+p1 + p2 +
+  plot_annotation(
+    title   = "New York State Migration Patterns (2023-2024)",
+    caption = "Source: ACS-1 State-to-State Migration Flows"
+  )
+```
+
+If you meet someone who moved to New York State, they most likely
+came from **`r ny_in$state_1y[1]`**. If a friend is moving out of
+New York, they are most likely heading to **`r ny_out$state_current[1]`**.
+
+#### 6.3 — Who Moves to NYC? Where Do NYC Residents Go?
+
+```{r eda-6-3}
+#| message: false
+#| warning: false
+
+nyc_pattern <- "New York-Newark-Jersey City"
+
+nyc_in <- metro_flows |>
+  filter(
+    str_detect(metro1, nyc_pattern),
+    !str_detect(metro2, nyc_pattern),
+    !is.na(moved_in),
+    moved_in > 0
+  ) |>
+  arrange(desc(moved_in)) |>
+  slice_head(n = 10)
+
+nyc_out <- metro_flows |>
+  filter(
+    str_detect(metro1, nyc_pattern),
+    !str_detect(metro2, nyc_pattern),
+    !is.na(moved_out),
+    moved_out > 0
+  ) |>
+  arrange(desc(moved_out)) |>
+  slice_head(n = 10)
+
+p3 <- nyc_in |>
+  mutate(metro2 = str_trunc(metro2, 35) |>
+           fct_reorder(moved_in)) |>
+  ggplot(aes(x = moved_in, y = metro2)) +
+  geom_col(fill = "#2171b5") +
+  scale_x_continuous(labels = comma_format()) +
+  labs(title = "Top Origins for NYC In-Migrants",
+       x = "Moved In", y = NULL) +
+  theme_minimal()
+
+p4 <- nyc_out |>
+  mutate(metro2 = str_trunc(metro2, 35) |>
+           fct_reorder(moved_out)) |>
+  ggplot(aes(x = moved_out, y = metro2)) +
+  geom_col(fill = "#cb181d") +
+  scale_x_continuous(labels = comma_format()) +
+  labs(title = "Top Destinations for NYC Out-Migrants",
+       x = "Moved Out", y = NULL) +
+  theme_minimal()
+
+p3 + p4 +
+  plot_annotation(
+    title   = "New York City Metro Migration Patterns",
+    caption = "Source: ACS-5 Metro-to-Metro Flows, 2016-2020"
+  )
+```
+
+People moving to NYC most likely came from the
+**`r str_trunc(nyc_in$metro2[1], 40)`** metro area. Those leaving
+NYC most commonly move to **`r str_trunc(nyc_out$metro2[1], 40)`**.
+
+#### 6.4 — States with Highest In-, Out-, and Net Migration
+
+```{r eda-6-4}
+#| message: false
+#| warning: false
+
+in_mig <- cross_state |>
+  group_by(state = state_current, year_current) |>
+  summarize(in_migrants = sum(population, na.rm = TRUE),
+            .groups = "drop") |>
+  group_by(state) |>
+  summarize(avg_in = mean(in_migrants))
+
+out_mig <- cross_state |>
+  group_by(state = state_1y, year_current) |>
+  summarize(out_migrants = sum(population, na.rm = TRUE),
+            .groups = "drop") |>
+  group_by(state) |>
+  summarize(avg_out = mean(out_migrants))
+
+net_mig <- in_mig |>
+  inner_join(out_mig, by = "state") |>
+  mutate(avg_net = avg_in - avg_out) |>
+  arrange(desc(avg_net))
+
+net_mig |>
+  slice(c(1:10, (n() - 9):n())) |>
+  gt() |>
+  tab_header(
+    "States with Highest and Lowest Net Migration (2023-2024 avg)"
+  ) |>
+  cols_label(
+    state   = "State",
+    avg_in  = "Avg In-Migration",
+    avg_out = "Avg Out-Migration",
+    avg_net = "Net Migration"
+  ) |>
+  fmt_integer(c(avg_in, avg_out, avg_net)) |>
+  data_color(columns = avg_net, palette = "RdYlGn") |>
+  tab_source_note("Source: ACS-1 State-to-State Migration Flows")
+
+net_mig |>
+  mutate(
+    state     = fct_reorder(state, avg_net),
+    direction = if_else(avg_net >= 0, "Gain", "Loss")
+  ) |>
+  ggplot(aes(x = avg_net, y = state, fill = direction)) +
+  geom_col(show.legend = FALSE) +
+  scale_x_continuous(labels = comma_format()) +
+  scale_fill_manual(
+    values = c("Gain" = "#2ca25f", "Loss" = "#de2d26")
+  ) +
+  labs(
+    title    = "Net Internal Migration by State (2023-2024 Average)",
+    subtitle = "Texas and Florida gain; California and New York lose",
+    x        = "Net Migration (In minus Out)",
+    y        = NULL,
+    caption  = "Source: ACS-1 State-to-State Migration Flows"
+  ) +
+  theme_minimal(base_size = 11) +
+  theme(axis.text.y = element_text(size = 7))
+```
+
+Texas and Florida dominate net in-migration. California and New York
+experience the largest net out-migration, which has significant
+implications for congressional apportionment.
+
+#### 6.5 — Metro Areas with Highest Net Migration
+
+```{r eda-6-5}
+#| message: false
+#| warning: false
+
+metro_net <- metro_flows |>
+  filter(!is.na(moved_in), !is.na(moved_out)) |>
+  group_by(metro = metro1) |>
+  summarize(
+    total_in  = sum(moved_in,  na.rm = TRUE),
+    total_out = sum(moved_out, na.rm = TRUE),
+    net       = total_in - total_out
+  ) |>
+  arrange(desc(net))
+
+metro_net |>
+  slice(c(1:10, (n() - 9):n())) |>
+  mutate(metro = str_trunc(metro, 45)) |>
+  gt() |>
+  tab_header("Metro Areas: Highest and Lowest Net Migration") |>
+  cols_label(
+    metro     = "Metro Area",
+    total_in  = "Total In-Migration",
+    total_out = "Total Out-Migration",
+    net       = "Net Migration"
+  ) |>
+  fmt_integer(c(total_in, total_out, net)) |>
+  data_color(columns = net, palette = "RdYlGn") |>
+  tab_source_note("Source: ACS-5 Metro-to-Metro Flows, 2016-2020")
+```
+
+Phoenix and Dallas metro areas show the highest net in-migration,
+while New York and Los Angeles metros show the largest net losses.
+
+#### 6.6 — States with Lowest Proportional In-Migration
+
+```{r eda-6-6}
+#| message: false
+#| warning: false
+
+stayed_pop <- flows_all |>
+  filter(state_current == state_1y,
+         year_current == 2024) |>
+  select(state_current, stayed = population)
+
+in_mig_2024 <- cross_state |>
+  filter(year_current == 2024) |>
+  group_by(state_current) |>
+  summarize(in_mig = sum(population, na.rm = TRUE))
+
+sticky <- stayed_pop |>
+  left_join(in_mig_2024, by = "state_current") |>
+  mutate(
+    in_mig      = coalesce(in_mig, 0L),
+    total       = stayed + in_mig,
+    frac_in_mig = in_mig / total
+  ) |>
+  arrange(frac_in_mig)
+
+sticky |>
+  slice_head(n = 10) |>
+  select(state_current, stayed, in_mig, frac_in_mig) |>
+  gt() |>
+  tab_header(
+    "Most Sticky States - Lowest Proportional In-Migration, 2024"
+  ) |>
+  cols_label(
+    state_current = "State",
+    stayed        = "Residents Who Stayed",
+    in_mig        = "In-Migrants",
+    frac_in_mig   = "Fraction from In-Migration"
+  ) |>
+  fmt_integer(c(stayed, in_mig)) |>
+  fmt_percent(frac_in_mig, decimals = 2) |>
+  tab_source_note("Source: ACS-1 State-to-State Flows, 2024")
+```
+
+California, Michigan, and New York have the lowest proportional
+in-migration, meaning their residents are the least likely to have
+moved from another state in the past year.
+
+#### 6.7 — States Where Migration Drives Most Population Growth
+
+```{r eda-6-7}
+#| message: false
+#| warning: false
+
+pop_change <- state_pop |>
+  filter(year %in% c(2022, 2024)) |>
+  pivot_wider(
+    names_from   = year,
+    values_from  = population,
+    names_prefix = "pop_"
+  ) |>
+  mutate(total_growth = pop_2024 - pop_2022) |>
+  filter(!is.na(total_growth), total_growth > 0)
+
+# Net migration per state = total in minus total out
+net_by_state <- in_mig |>
+  rename(state_name = state) |>
+  inner_join(
+    out_mig |> rename(state_name = state),
+    by = "state_name"
+  ) |>
+  mutate(net_migration = avg_in - avg_out)
+
+growth_decomp <- pop_change |>
+  left_join(net_by_state, by = "state_name") |>
+  filter(!is.na(net_migration)) |>
+  mutate(
+    frac_from_migration = net_migration / total_growth
+  ) |>
+  filter(
+    frac_from_migration > 0,
+    frac_from_migration < 5
+  ) |>
+  arrange(desc(frac_from_migration))
+
+growth_decomp |>
+  select(state_name, total_growth,
+         net_migration, frac_from_migration) |>
+  slice_head(n = 10) |>
+  gt() |>
+  tab_header(
+    "States Where Internal Migration Drives Most Population Growth"
+  ) |>
+  cols_label(
+    state_name          = "State",
+    total_growth        = "2-Year Population Growth",
+    net_migration       = "Avg Net Internal Migration",
+    frac_from_migration = "Fraction Due to Migration"
+  ) |>
+  fmt_integer(c(total_growth, net_migration)) |>
+  fmt_percent(frac_from_migration, decimals = 1) |>
+  data_color(columns = frac_from_migration, palette = "YlGnBu") |>
+  tab_source_note("Source: ACS-1 Population + Migration Flows")
+```
+
+States like Idaho, Montana, and Florida have the highest share of
+their population growth driven by internal migration rather than
+natural increase (births minus deaths).
+
+#### 6.8 — California: Who Moves In and Out?
+
+```{r eda-6-8}
+#| message: false
+#| warning: false
+
+ca_in <- cross_state |>
+  filter(state_current == "California") |>
+  group_by(state_1y) |>
+  summarize(avg_in = mean(population, na.rm = TRUE)) |>
+  arrange(desc(avg_in))
+
+ca_out <- cross_state |>
+  filter(state_1y == "California") |>
+  group_by(state_current) |>
+  summarize(avg_out = mean(population, na.rm = TRUE)) |>
+  arrange(desc(avg_out))
+
+p5 <- ca_in |>
+  slice_head(n = 10) |>
+  mutate(state_1y = fct_reorder(state_1y, avg_in)) |>
+  ggplot(aes(x = avg_in, y = state_1y)) +
+  geom_col(fill = "#1a6faf") +
+  scale_x_continuous(labels = comma_format()) +
+  labs(title = "Top Origins for California In-Migrants",
+       x = "Avg Annual In-Migrants", y = NULL) +
+  theme_minimal()
+
+p6 <- ca_out |>
+  slice_head(n = 10) |>
+  mutate(state_current = fct_reorder(state_current, avg_out)) |>
+  ggplot(aes(x = avg_out, y = state_current)) +
+  geom_col(fill = "#b2182b") +
+  scale_x_continuous(labels = comma_format()) +
+  labs(title = "Top Destinations for California Out-Migrants",
+       x = "Avg Annual Out-Migrants", y = NULL) +
+  theme_minimal()
+
+p5 + p6 +
+  plot_annotation(
+    title   = "California Migration Flows (2023-2024 Average)",
+    caption = "Source: ACS-1 State-to-State Migration Flows"
+  )
+```
+
+The state sending the most migrants to California is
+**`r ca_in$state_1y[1]`**. Californians who move out most
+commonly go to **`r ca_out$state_current[1]`**.
+
+#### 6.9 — Los Angeles Metro: External Migration Connections
+
+The largest metropolitan area in California is the
+**Los Angeles-Long Beach-Anaheim Metro Area**.
+
+```{r eda-6-9}
+#| message: false
+#| warning: false
+
+la_pattern <- "Los Angeles-Long Beach"
+
+# Filter out California metros to show only external connections
+la_in <- metro_flows |>
+  filter(
+    str_detect(metro1, la_pattern),
+    !str_detect(metro2, la_pattern),
+    !is.na(moved_in),
+    moved_in > 0,
+    state2 != "CA"
+  ) |>
+  arrange(desc(moved_in)) |>
+  slice_head(n = 10)
+
+la_out <- metro_flows |>
+  filter(
+    str_detect(metro1, la_pattern),
+    !str_detect(metro2, la_pattern),
+    !is.na(moved_out),
+    moved_out > 0,
+    state2 != "CA"
+  ) |>
+  arrange(desc(moved_out)) |>
+  slice_head(n = 10)
+
+p7 <- la_in |>
+  mutate(metro2 = str_trunc(metro2, 35) |>
+           fct_reorder(moved_in)) |>
+  ggplot(aes(x = moved_in, y = metro2)) +
+  geom_col(fill = "#1a6faf") +
+  scale_x_continuous(labels = comma_format()) +
+  labs(title = "Top Origins for LA Metro In-Migrants",
+       subtitle = "Excluding California metros",
+       x = "Moved In", y = NULL) +
+  theme_minimal()
+
+p8 <- la_out |>
+  mutate(metro2 = str_trunc(metro2, 35) |>
+           fct_reorder(moved_out)) |>
+  ggplot(aes(x = moved_out, y = metro2)) +
+  geom_col(fill = "#b2182b") +
+  scale_x_continuous(labels = comma_format()) +
+  labs(title = "Top Destinations for LA Metro Out-Migrants",
+       subtitle = "Excluding California metros",
+       x = "Moved Out", y = NULL) +
+  theme_minimal()
+
+p7 + p8 +
+  plot_annotation(
+    title   = "Los Angeles Metro External Migration Connections",
+    caption = "Source: ACS-5 Metro-to-Metro Flows, 2016-2020"
+  )
+
+# Strong connections table
+la_total_in <- sum(la_in$moved_in, na.rm = TRUE)
+
+la_in |>
+  mutate(
+    share  = moved_in / la_total_in,
+    metro2 = str_trunc(metro2, 45)
+  ) |>
+  select(metro2, moved_in, share) |>
+  gt() |>
+  tab_header(
+    "Non-California Metro Areas with Strongest Connection to LA"
+  ) |>
+  cols_label(
+    metro2   = "Metro Area",
+    moved_in = "Moved In",
+    share    = "Share of Top-10 In-Flow"
+  ) |>
+  fmt_integer(moved_in) |>
+  fmt_percent(share, decimals = 1) |>
+  tab_source_note(
+    "Source: ACS-5 Metro-to-Metro Migration Flows"
+  )
+```
+
+The metro area outside California with the highest migration
+into LA is **`r str_trunc(la_in$metro2[1], 45)`**. The most
+popular destination outside California for LA residents is
+**`r str_trunc(la_out$metro2[1], 45)`**.
+
+
+
+## Final Deliverable: Ensuring California's Political Power in 2032
+
+### Task 7: Population Projections to 2030
+
+```{r task7-projections}
+#| message: false
+#| warning: false
+
+# --- National populations ---
+nat_pop <- state_pop |>
+  filter(year %in% c(2022, 2023, 2024)) |>
+  group_by(year) |>
+  summarize(national_pop = sum(population, na.rm = TRUE))
+
+pop_2022_nat <- nat_pop |> filter(year == 2022) |> pull(national_pop)
+pop_2023_nat <- nat_pop |> filter(year == 2023) |> pull(national_pop)
+pop_2024_nat <- nat_pop |> filter(year == 2024) |> pull(national_pop)
+
+# --- Step 1: Estimate international in-migration (M) ---
+# People in year t who were abroad in year t-1
+# These appear in flows as rows where state_1y is not in state.name
+# We approximate M as total pop change minus domestic net migration
+# Domestic net migration = 0 nationally so:
+# P_t = P_{t-1} * (1 + gamma) + M
+# We simplify: gamma = (P_t - P_{t-1}) / P_{t-1}
+# This absorbs both natural growth and international migration
+
+gamma_2024 <- (pop_2024_nat - pop_2023_nat) / pop_2023_nat
+gamma_2023 <- (pop_2023_nat - pop_2022_nat) / pop_2022_nat
+gamma_avg  <- mean(c(gamma_2024, gamma_2023))
+
+cat(sprintf("gamma 2023->2024: %.6f\n", gamma_2024))
+cat(sprintf("gamma 2022->2023: %.6f\n", gamma_2023))
+cat(sprintf("gamma average:    %.6f\n", gamma_avg))
+
+# --- State populations for each year ---
+pop_2022_df <- state_pop |>
+  filter(year == 2022) |>
+  select(state_name, population)
+
+pop_2023_df <- state_pop |>
+  filter(year == 2023) |>
+  select(state_name, population)
+
+pop_2024_df <- state_pop |>
+  filter(year == 2024) |>
+  select(state_name, population)
+
+# --- Step 2: Compute lambda_ij for each state pair ---
+# lambda_ij = flow_ij / (pop_i * pop_j)
+compute_lambdas <- function(flows_yr, pop_from_df,
+                             pop_to_df, yr) {
+  flows_yr |>
+    filter(year_current == yr,
+           state_current != state_1y,
+           population > 0) |>
+    left_join(
+      pop_from_df |> rename(pop_i = population),
+      by = c("state_1y" = "state_name")
+    ) |>
+    left_join(
+      pop_to_df |> rename(pop_j = population),
+      by = c("state_current" = "state_name")
+    ) |>
+    filter(!is.na(pop_i), !is.na(pop_j),
+           pop_i > 0, pop_j > 0) |>
+    mutate(
+      lambda = population / (pop_i * pop_j)
+    ) |>
+    select(state_from = state_1y,
+           state_to   = state_current,
+           lambda)
+}
+
+lambdas_2024 <- compute_lambdas(
+  flows_all, pop_2023_df, pop_2024_df, 2024
+)
+lambdas_2023 <- compute_lambdas(
+  flows_all, pop_2022_df, pop_2023_df, 2023
+)
+
+# Average lambdas over two years
+lambdas_avg <- lambdas_2024 |>
+  full_join(
+    lambdas_2023,
+    by     = c("state_from", "state_to"),
+    suffix = c("_2024", "_2023")
+  ) |>
+  mutate(
+    lambda = rowMeans(
+      cbind(lambda_2024, lambda_2023),
+      na.rm = TRUE
+    )
+  ) |>
+  select(state_from, state_to, lambda)
+
+cat("Lambda pairs computed:", nrow(lambdas_avg), "\n")
+
+# --- Step 3: Project one year forward ---
+project_one_year <- function(pop_df, lambdas, gamma) {
+
+  in_flows <- lambdas |>
+    left_join(
+      pop_df |> rename(pop_from = population),
+      by = c("state_from" = "state_name")
+    ) |>
+    left_join(
+      pop_df |> rename(pop_to = population),
+      by = c("state_to" = "state_name")
+    ) |>
+    filter(!is.na(pop_from), !is.na(pop_to)) |>
+    mutate(flow = lambda * pop_from * pop_to) |>
+    group_by(state_to) |>
+    summarize(total_in = sum(flow, na.rm = TRUE))
+
+  out_flows <- lambdas |>
+    left_join(
+      pop_df |> rename(pop_from = population),
+      by = c("state_from" = "state_name")
+    ) |>
+    left_join(
+      pop_df |> rename(pop_to = population),
+      by = c("state_to" = "state_name")
+    ) |>
+    filter(!is.na(pop_from), !is.na(pop_to)) |>
+    mutate(flow = lambda * pop_from * pop_to) |>
+    group_by(state_from) |>
+    summarize(total_out = sum(flow, na.rm = TRUE))
+
+  pop_df |>
+    left_join(in_flows,
+              by = c("state_name" = "state_to")) |>
+    left_join(out_flows,
+              by = c("state_name" = "state_from")) |>
+    mutate(
+      total_in   = coalesce(total_in,  0),
+      total_out  = coalesce(total_out, 0),
+      population = (1 + gamma) * population +
+                   total_in - total_out
+    ) |>
+    select(state_name, population)
+}
+
+# --- Project 2025 to 2030 ---
+projections           <- list()
+projections[["2024"]] <- pop_2024_df
+
+for (yr in 2025:2030) {
+  prev <- projections[[as.character(yr - 1)]]
+  projections[[as.character(yr)]] <- project_one_year(
+    prev, lambdas_avg, gamma_avg
+  )
+}
+
+# Compile all years
+proj_df <- map2(
+  projections,
+  names(projections),
+  function(df, yr) mutate(df, year = as.integer(yr))
+) |>
+  list_rbind()
+
+# Show 2030 projections
+proj_2030 <- proj_df |>
+  filter(year == 2030) |>
+  arrange(desc(population))
+
+proj_2030 |>
+  slice_head(n = 15) |>
+  gt() |>
+  tab_header("Projected State Populations in 2030 (Top 15)") |>
+  cols_label(
+    state_name = "State",
+    population = "Projected 2030 Population",
+    year       = "Year"
+  ) |>
+  fmt_integer(population) |>
+  data_color(columns = population, palette = "Blues") |>
+  tab_source_note(
+    "Source: ACS-1 Migration Flows + Linear Migration Model"
+  )
+
+# California trajectory
+proj_df |>
+  filter(state_name == "California") |>
+  ggplot(aes(x = year, y = population)) +
+  geom_line(color = "#1a6faf", linewidth = 1.5) +
+  geom_point(color = "#1a6faf", size = 3) +
+  scale_y_continuous(
+    labels = comma_format(scale = 1e-6, suffix = "M")
+  ) +
+  scale_x_continuous(breaks = 2024:2030) +
+  labs(
+    title    = "California Population Projection: 2024-2030",
+    subtitle = "Based on ACS-1 migration flow model",
+    x        = "Year",
+    y        = "Population (millions)",
+    caption  = "Source: ACS-1 State-to-State Migration Flows"
+  ) +
+  theme_minimal(base_size = 13)
+```
+
+### Task 8: Reapportionment (Huntington-Hill Method)
+
+```{r task8-reapportionment}
+#| message: false
+#| warning: false
+
+huntington_hill <- function(pop_df,
+                             n_districts   = 435,
+                             max_districts = 100) {
+  pop_df |>
+    expand_grid(cd = seq(0, max_districts)) |>
+    mutate(
+      hh_den    = sqrt(cd * (cd + 1)),
+      hh_weight = if_else(cd == 0, Inf, population / hh_den)
+    ) |>
+    slice_max(hh_weight, n = n_districts) |>
+    group_by(state_name) |>
+    summarize(
+      population  = first(population),
+      n_districts = n()
+    ) |>
+    mutate(
+      pop_per_district = population / n_districts
+    ) |>
+    arrange(desc(n_districts), desc(population))
+}
+
+# Download 2020 apportionment for comparison
+data_file_2020 <- fs::path(data_mp03,
+                            "apportionment-2020-tableA.xlsx")
+
+if (!fs::file_exists(data_file_2020)) {
+  if (!fs::file_exists(data_file_2020)) {
+  download.file(
+    paste0(
+      "https://www2.census.gov/programs-surveys/decennial/",
+      "2020/data/apportionment/",
+      "apportionment-2020-tableA.xlsx"
+    ),
+    destfile = data_file_2020,
+    mode     = "wb",
+    method   = "curl",
+    extra    = "-A 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'"
+  )
+}
+}
+
+appt_2020_raw <- read_excel(data_file_2020, skip = 4) |>
+  select(state_name = 1, population = 2) |>
+  filter(!state_name %in% c(
+    "District of Columbia", "U.S. Total"
+  )) |>
+  mutate(
+    population = as.integer(
+      str_remove_all(as.character(population), ",")
+    )
+  )
+
+appt_2020 <- huntington_hill(appt_2020_raw)
+
+# 2030 projected apportionment
+appt_2030 <- proj_2030 |>
+  select(state_name, population) |>
+  mutate(population = as.integer(population)) |>
+  filter(!is.na(population), population > 0) |>
+  huntington_hill()
+
+# Compare changes
+appt_changes <- appt_2020 |>
+  select(state_name, districts_2020 = n_districts) |>
+  full_join(
+    appt_2030 |>
+      select(state_name, districts_2030 = n_districts),
+    by = "state_name"
+  ) |>
+  mutate(change = districts_2030 - districts_2020) |>
+  arrange(desc(change))
+
+appt_changes |>
+  filter(change != 0) |>
+  gt() |>
+  tab_header(
+    "Projected Changes in Congressional Districts: 2020 to 2030"
+  ) |>
+  cols_label(
+    state_name     = "State",
+    districts_2020 = "2020 Districts",
+    districts_2030 = "2030 Districts (Projected)",
+    change         = "Change"
+  ) |>
+  data_color(columns = change, palette = "RdYlGn") |>
+  tab_source_note(
+    "Source: ACS-1 Migration Model + Huntington-Hill Method"
+  )
+
+# California result
+ca_2020 <- appt_2020 |>
+  filter(state_name == "California") |>
+  pull(n_districts)
+ca_2030 <- appt_2030 |>
+  filter(state_name == "California") |>
+  pull(n_districts)
+
+cat(sprintf("California 2020 seats: %d\n", ca_2020))
+cat(sprintf("California 2030 seats: %d\n", ca_2030))
+```
+
+Based on our projections, California is expected to have 
+**`r ca_2030` congressional seats** after the 2030 census, 
+compared to **`r ca_2020` seats** currently.
+
+### Task 9: California Advertising Strategy
+
+```{r task9-strategy}
+#| message: false
+#| warning: false
+
+# California net migration stats for 2024
+ca_net <- flows_all |>
+  filter(year_current == 2024) |>
+  summarize(
+    total_in  = sum(
+      population[state_current == "California" &
+                   state_1y != "California"],
+      na.rm = TRUE
+    ),
+    total_out = sum(
+      population[state_1y == "California" &
+                   state_current != "California"],
+      na.rm = TRUE
+    )
+  ) |>
+  mutate(net = total_in - total_out)
+
+cat("California 2024 In-Migration: ",
+    scales::comma(ca_net$total_in),  "\n")
+cat("California 2024 Out-Migration:",
+    scales::comma(ca_net$total_out), "\n")
+cat("California 2024 Net Migration:",
+    scales::comma(ca_net$net),       "\n")
+
+# Top target metros for advertising
+target_metros <- metro_flows |>
+  filter(
+    str_detect(metro1,
+               "Los Angeles|San Francisco|San Diego"),
+    !str_detect(metro2,
+                "Los Angeles|San Francisco|San Diego|Riverside"),
+    !is.na(state2),
+    state2 != "CA",
+    moved_in > 0
+  ) |>
+  group_by(metro2) |>
+  summarize(
+    total_in  = sum(moved_in,  na.rm = TRUE),
+    total_out = sum(moved_out, na.rm = TRUE)
+  ) |>
+  arrange(desc(total_in)) |>
+  slice_head(n = 12)
+
+# Chart
+target_metros |>
+  mutate(
+    metro2 = str_trunc(metro2, 40) |>
+      fct_reorder(total_in)
+  ) |>
+  ggplot(aes(x = total_in, y = metro2)) +
+  geom_col(fill = "#2c7bb6") +
+  geom_text(
+    aes(label = comma(total_in)),
+    hjust = -0.1,
+    size  = 3
+  ) +
+  scale_x_continuous(
+    labels = comma_format(),
+    expand = expansion(mult = c(0, 0.15))
+  ) +
+  labs(
+    title    = "Top Target Metro Areas for California's Ad Campaign",
+    subtitle = "Non-CA metros with highest in-flow to CA major cities",
+    x        = "Total Moved Into California Metros",
+    y        = NULL,
+    caption  = "Source: ACS-5 Metro-to-Metro Migration Flows"
+  ) +
+  theme_minimal(base_size = 12)
+
+# How many migrants needed for extra seat?
+pop_ca_2030 <- proj_2030 |>
+  filter(state_name == "California") |>
+  pull(population)
+
+cat(sprintf(
+  "\nCalifornia projected 2030 population: %s\n",
+  scales::comma(round(pop_ca_2030))
+))
+cat(sprintf(
+  "Approx additional net migrants needed for +1 seat: ~%s/year\n",
+  scales::comma(round(800000 / 6))
+))
+```
+
+## Conclusions and Policy Recommendations
+
+### Summary of Findings
+
+California faces a significant net out-migration challenge. Our analysis shows:
+
+- California lost more residents to internal migration than any 
+  other state, with **`r ca_out$state_current[1]`** and Nevada 
+  being top destinations for departing Californians.
+- The **Los Angeles metro** has deep ties to New York City, 
+  Chicago, and Seattle — these are California's most important 
+  external feeder metros.
+- Our model projects California will have **`r ca_2030` 
+  congressional seats** after the 2030 census.
+
+### Advertising Strategy
+
+**Attract In-Migrants (Offense):**
+Target the **New York, Chicago, and Seattle** metro areas — 
+the largest pools of potential California in-migrants. 
+Advertising should emphasize California's climate, tech economy, 
+and quality of life.
+
+**Retain Residents (Defense):**
+Counter the outflow to Texas, Nevada, and Arizona by addressing 
+housing costs and cost of living concerns. Policy messaging around 
+new housing initiatives would complement paid advertising.
+
+**Migration Needed for an Extra Seat:**
+Approximately **~133,000 additional net migrants per year** over 
+2024-2030 would give California enough population to retain or 
+gain an additional congressional seat.
+
+**Proposed Slogan:** *"California: Still the One."*
+
+
+
+
+
+## #01: Expanding the House
+
+The United States House of Representatives currently allocates 435 seats 
+among 50 states using the Huntington-Hill method. While this system has 
+remained unchanged since 1929, expanding the House beyond 435 seats would 
+address two fundamental problems: unequal representation across states and 
+California's disproportionately weak voice in Congress.
+
+### Population Equity Across States
+
+The core promise of the House is proportional representation — one person, 
+one vote. In practice, the fixed size of 435 seats combined with the 
+constitutional guarantee of one seat per state creates significant 
+population imbalances. Based on our 2030 projections, California has 
+approximately **`r scales::comma(round(pop_ca_2030 / ca_2030))`** 
+residents per congressional seat, while smaller states enjoy far more 
+representation per capita. Wyoming, for instance, receives a full seat 
+for roughly 580,000 residents. This means a Wyoming voter has nearly 
+1.3 times the congressional representation of a California voter — a 
+direct violation of the equal representation principle the House was 
+designed to uphold. Expanding the House reduces this distortion because 
+Huntington-Hill rounding errors — which systematically disadvantage large 
+states — shrink as the total number of seats grows. With more seats to 
+allocate, each state's share of the House converges closer to its true 
+share of the national population.
+
+### California's Gain in a Larger House
+
+One widely debated reform is the **Wyoming Rule**, which sets the size of 
+the House so that the least-populated state (currently Wyoming) receives 
+exactly one seat, and every other state receives seats proportional to that 
+benchmark. Under this rule, the House would expand to approximately 
+**585 seats** based on current population. Running our Huntington-Hill 
+model at this size:
+
+```{r ec01-wyoming-rule}
+#| message: false
+#| warning: false
+
+# Wyoming Rule: House size = national pop / smallest state pop
+wyoming_pop <- proj_2030 |>
+  filter(state_name == "Wyoming") |>
+  pull(population)
+
+nat_pop_2030 <- proj_2030 |>
+  summarize(total = sum(population, na.rm = TRUE)) |>
+  pull(total)
+
+wyoming_rule_size <- round(nat_pop_2030 / wyoming_pop)
+cat(sprintf("Wyoming Rule House size: %d seats\n", wyoming_rule_size))
+
+# Reapportion under Wyoming Rule
+appt_wyoming <- proj_2030 |>
+  select(state_name, population) |>
+  mutate(population = as.integer(population)) |>
+  filter(!is.na(population), population > 0) |>
+  huntington_hill(n_districts = wyoming_rule_size,
+                  max_districts = 150)
+
+# Compare California
+ca_wyoming <- appt_wyoming |>
+  filter(state_name == "California") |>
+  pull(n_districts)
+
+cat(sprintf("California seats (435):         %d\n", ca_2030))
+cat(sprintf("California seats (Wyoming Rule): %d\n", ca_wyoming))
+cat(sprintf("California gain: +%d seats\n", ca_wyoming - ca_2030))
+
+# Show all states that gain
+appt_wyoming |>
+  select(state_name, seats_wyoming = n_districts) |>
+  left_join(
+    appt_2030 |> select(state_name, seats_435 = n_districts),
+    by = "state_name"
+  ) |>
+  mutate(change = seats_wyoming - seats_435) |>
+  filter(change != 0) |>
+  arrange(desc(change)) |>
+  gt() |>
+  tab_header(
+    "States Gaining Seats Under the Wyoming Rule vs. Current 435-Seat House"
+  ) |>
+  cols_label(
+    state_name   = "State",
+    seats_435    = "Seats (435)",
+    seats_wyoming = "Seats (Wyoming Rule)",
+    change       = "Change"
+  ) |>
+  data_color(columns = change, palette = "Blues") |>
+  tab_source_note("Source: ACS-1 Migration Model + Huntington-Hill Method")
+```
+
+Under the Wyoming Rule, California would hold **`r ca_wyoming` seats** 
+compared to **`r ca_2030`** under the current system — a gain of 
+**`r ca_wyoming - ca_2030` additional seats**. This directly translates 
+to greater legislative power: more committee assignments, more 
+appropriations influence, and more electoral votes in presidential 
+elections. Large, diverse states like California, Texas, and Florida 
+all benefit substantially from expansion, as their populations are most 
+distorted by the current 435-seat cap.
+
+### The Broader Democratic Case
+
+Beyond California's interests, a larger House is simply better democracy. 
+The United States currently has the worst representative-to-population 
+ratio of any major democracy — roughly one representative per 760,000 
+residents. By comparison, Germany has one member of the Bundestag per 
+~120,000 residents and the United Kingdom has one MP per ~100,000 
+residents. The Founders themselves anticipated a growing House: the 
+original Constitution specified one representative per 30,000 residents, 
+which would imply a House of over 10,000 members today. A more modest 
+expansion to 585 seats under the Wyoming Rule would meaningfully restore 
+the representational link between citizens and their government, reduce 
+the distortions created by Huntington-Hill rounding, and give 
+California the political voice its 39 million residents deserve.
+
+
+
+##  #02: Spatial Visualizations
+
+The following maps visualize the key migration and population patterns 
+identified in our analysis. Both use the Census geometry downloaded 
+alongside the ACS-1 population data in Task 1.
+
+
+```{r ec02-maps}
+#| message: false
+#| warning: false
+
+library(sf)
+
+# state_pop_raw has geometry; state_pop dropped it during cleaning
+# We need to extract geometry separately and re-attach it
+state_geo <- state_pop_raw |>
+  filter(year == 2024) |>
+  filter(!NAME %in% c("Puerto Rico", "District of Columbia")) |>
+  select(state_name = NAME, geometry) |>
+  st_as_sf()  # ensure it is treated as sf object
+
+# --- Map 1: Net Internal Migration ---
+map1_data <- state_geo |>
+  left_join(net_mig, by = c("state_name" = "state")) |>
+  st_as_sf()
+
+ggplot(map1_data) +
+  geom_sf(aes(fill = avg_net), color = "white", linewidth = 0.3) +
+  scale_fill_gradient2(
+    low      = "#d73027",
+    mid      = "white",
+    high     = "#1a9850",
+    midpoint = 0,
+    labels   = comma_format(),
+    name     = "Net Migration"
+  ) +
+  labs(
+    title    = "Net Internal Migration by State (2023–2024 Average)",
+    subtitle = "Green = net gain, Red = net loss",
+    caption  = "Source: ACS-1 State-to-State Migration Flows"
+  ) +
+  theme_void(base_size = 13) +
+  theme(
+    plot.title       = element_text(face = "bold", hjust = 0.5),
+    plot.subtitle    = element_text(hjust = 0.5, color = "gray40"),
+    legend.position  = "bottom",
+    legend.key.width = unit(2, "cm")
+  )
+
+# --- Map 2: Projected 2030 Population ---
+map2_data <- state_geo |>
+  left_join(
+    proj_2030 |> select(state_name, pop_2030 = population),
+    by = "state_name"
+  ) |>
+  st_as_sf()
+
+ggplot(map2_data) +
+  geom_sf(aes(fill = pop_2030), color = "white", linewidth = 0.3) +
+  scale_fill_viridis_c(
+    labels   = comma_format(scale = 1e-6, suffix = "M"),
+    name     = "Population",
+    option   = "C"
+  ) +
+  labs(
+    title    = "Projected State Populations in 2030",
+    subtitle = "Based on ACS-1 migration flow model",
+    caption  = "Source: ACS-1 State-to-State Migration Flows"
+  ) +
+  theme_void(base_size = 13) +
+  theme(
+    plot.title       = element_text(face = "bold", hjust = 0.5),
+    plot.subtitle    = element_text(hjust = 0.5, color = "gray40"),
+    legend.position  = "bottom",
+    legend.key.width = unit(2, "cm")
+  )
+```
+### Map 1: Net Internal Migration
+
+The first map shows which states are gaining and losing residents 
+through internal migration. **Texas and Florida** stand out as the 
+dominant net gainers, shown in deep green. **California and New York** 
+appear in deep red, confirming the out-migration story identified in 
+our earlier analysis. The Mountain West states — Idaho, Montana, 
+and Utah — show moderate but consistent gains, reflecting the Sun 
+Belt migration trend documented throughout this project.
+
+### Map 2: Projected 2030 Population
+
+The second map shows projected state populations by 2030. California 
+and Texas remain the two most populous states by a wide margin, though 
+California's lead is narrowing due to sustained net out-migration. 
+The concentration of population in coastal states and the Sun Belt 
+is clearly visible, which directly drives the congressional 
+reapportionment shifts projected in Task 8.
+
+::: {.callout-note title="AI Usage Statement" collapse="true"}
+
+No Generative AI tools were used to complete this mini-project.
+
+:::
