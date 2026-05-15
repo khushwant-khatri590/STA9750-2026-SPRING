@@ -1,0 +1,116 @@
+peer_feedback_assignment_1:
+  issue_number: 50
+  issue_owner: carmine-montaperto
+  issue_ok: yes
+  issue_status: OK
+  overall_comments:
+    positive: none
+    negative: none
+    advice: none
+  scores:
+    Written Communication:
+      score: 10.0
+      comment: clearly explained
+    Project Skeleton:
+      score: 8.0
+      comment: creative
+    Tables & Document Presentation:
+      score: 8.0
+      comment: formatting
+    Data Visualization:
+      score: 7.5
+      comment: well structure
+    Exploratory Data Analysis:
+      score: 10.0
+      comment: DEFAULT SCORE
+    Code Quality:
+      score: 10.0
+      comment: all code paased
+    Data Preparation:
+      score: 10.0
+      comment: DEFAULT SCORE
+    Analysis and Findings:
+      score: 8.0
+      comment: clear
+    Extra Credit:
+      score: 0.0
+      comment: no reason
+  mp_number: 2.0
+peer_feedback_assignment_2:
+  issue_number: 57
+  issue_owner: laurenrichbetch
+  issue_ok: no
+  issue_status: Could not locate your AI Usage Statement - No '.callout-note' block.
+  overall_comments:
+    positive: none
+    negative: none
+    advice: none
+  scores:
+    Written Communication:
+      score: 8.0
+      comment: cleared
+    Project Skeleton:
+      score: 9.0
+      comment: insightful
+    Tables & Document Presentation:
+      score: 8.0
+      comment: well structured
+    Data Visualization:
+      score: 7.5
+      comment: titles and structure
+    Exploratory Data Analysis:
+      score: 10.0
+      comment: DEFAULT SCORE
+    Code Quality:
+      score: 7.0
+      comment: clear
+    Data Preparation:
+      score: 10.0
+      comment: DEFAULT SCORE
+    Analysis and Findings:
+      score: 8.0
+      comment: no doubts
+    Extra Credit:
+      score: 1.0
+      comment: overall it was creative worked
+  mp_number: 2.0
+peer_feedback_assignment_3:
+  issue_number: 67
+  issue_owner: jalfred259806
+  issue_ok: yes
+  issue_status: OK
+  overall_comments:
+    positive: the last graph and unique way
+    negative: 'no'
+    advice: none
+  scores:
+    Written Communication:
+      score: 7.0
+      comment: clearly explained
+    Project Skeleton:
+      score: 8.0
+      comment: dont have any error
+    Tables & Document Presentation:
+      score: 8.0
+      comment: the way it has present
+    Data Visualization:
+      score: 8.0
+      comment: well structured
+    Exploratory Data Analysis:
+      score: 10.0
+      comment: DEFAULT SCORE
+    Code Quality:
+      score: 8.0
+      comment: clear codes
+    Data Preparation:
+      score: 10.0
+      comment: DEFAULT SCORE
+    Analysis and Findings:
+      score: 8.0
+      comment: convincing
+    Extra Credit:
+      score: 0.0
+      comment: none
+  mp_number: 2.0
+evaluator: khushwant-khatri590
+

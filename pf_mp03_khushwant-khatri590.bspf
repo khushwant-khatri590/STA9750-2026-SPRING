@@ -1,0 +1,148 @@
+peer_feedback_assignment_1:
+  issue_number: 68
+  issue_owner: izabellediaz20
+  issue_ok: yes
+  issue_status: OK
+  overall_comments:
+    positive: A major strength is the clear task-by-task organization and strong data
+      preparation workflow.
+    negative: The submission could improve by adding deeper interpretation of results
+      and cleaning warnings/output messages for a more polished final document.
+    advice: The submission could improve by adding deeper interpretation of results
+      and cleaning warnings/output messages for a more polished final document.
+  scores:
+    Written Communication:
+      score: 8.0
+      comment: The writing is clear and organized, though some explanations could
+        be more detailed.
+    Project Skeleton:
+      score: 9.0
+      comment: The project follows the required structure with all major tasks included.
+    Tables & Document Presentation:
+      score: 8.0
+      comment: Tables are readable and well-presented, though some output messages
+        could be cleaned up.
+    Data Visualization:
+      score: 7.0
+      comment: Visuals/tables support the analysis, but stronger chart design and
+        interpretation would improve the presentation.
+    Exploratory Data Analysis:
+      score: 8.0
+      comment: The EDA answers relevant questions and uses appropriate summaries,
+        though deeper insight would strengthen it.
+    Code Quality:
+      score: 8.0
+      comment: Code is functional and organized, but some warnings/messages and repeated
+        setup code could be cleaned.
+    Data Preparation:
+      score: 8.0
+      comment: Data acquisition and cleaning are handled well, especially across population
+        and migration datasets.
+    Analysis and Findings:
+      score: 8.0
+      comment: Findings are relevant and clearly stated, though conclusions could
+        be more strongly connected to evidence.
+    Extra Credit:
+      score: 0.0
+      comment: no reason
+  mp_number: 3.0
+peer_feedback_assignment_2:
+  issue_number: 83
+  issue_owner: kiran1051998
+  issue_ok: yes
+  issue_status: OK
+  overall_comments:
+    positive: One notable strength of the submission is its clear structure and organization,
+      making the analysis easy to follow.
+    negative: The submission could be improved by providing deeper interpretation
+      of results and stronger insights.
+    advice: The author could improve the submission by adding more detailed explanations
+      of findings, enhancing visualization clarity, and improving code documentation
+      and organization
+  scores:
+    Written Communication:
+      score: 8.0
+      comment: The submission is well-organized and clearly written, though some sections
+        could benefit from deeper explanation and clarity.
+    Project Skeleton:
+      score: 9.0
+      comment: The project follows the required structure with all major tasks completed
+        and properly organized.
+    Tables & Document Presentation:
+      score: 8.0
+      comment: Tables and outputs are clear and readable, though minor formatting
+        improvements could enhance overall presentation.
+    Data Visualization:
+      score: 7.0
+      comment: Visualizations support the analysis, but improvements in clarity, labeling,
+        and presentation would strengthen their effectiveness.
+    Exploratory Data Analysis:
+      score: 8.0
+      comment: The submission includes relevant exploratory analysis, though deeper
+        insights and interpretation would improve the overall quality.
+    Code Quality:
+      score: 8.0
+      comment: The code is functional and reasonably organized, though improvements
+        in readability and documentation would enhance quality.
+    Data Preparation:
+      score: 8.0
+      comment: Data preparation steps are appropriate and effective, though additional
+        explanation would strengthen the workflow.
+    Analysis and Findings:
+      score: 8.0
+      comment: The analysis presents relevant findings, though deeper insights and
+        stronger connections to results would improve impact.
+    Extra Credit:
+      score: 0.0
+      comment: no reason
+  mp_number: 3.0
+peer_feedback_assignment_3:
+  issue_number: 86
+  issue_owner: monica-phan26
+  issue_ok: yes
+  issue_status: OK
+  overall_comments:
+    positive: One notable strength of the submission is its strong organization and
+      clear, well-executed analysis.
+    negative: The submission could be improved by enhancing visualization clarity
+      and adding deeper interpretation of results.
+    advice: none
+  scores:
+    Written Communication:
+      score: 9.0
+      comment: The submission is clearly written and well-structured, with strong
+        organization and effective explanation of concepts.
+    Project Skeleton:
+      score: 9.0
+      comment: The project follows the required structure with all components properly
+        organized and included.
+    Tables & Document Presentation:
+      score: 8.0
+      comment: Tables and outputs are clear and readable, though minor formatting
+        improvements could enhance presentation.
+    Data Visualization:
+      score: 8.0
+      comment: Visualizations are appropriate and support the analysis, though additional
+        clarity and labeling would further improve them.
+    Exploratory Data Analysis:
+      score: 9.0
+      comment: The submission includes strong exploratory analysis with relevant insights
+        and appropriate methods.
+    Code Quality:
+      score: 8.0
+      comment: The code is functional and well-organized, though additional comments
+        and minor refinements would improve readability.
+    Data Preparation:
+      score: 9.0
+      comment: Data preparation is handled effectively with clear steps and appropriate
+        transformations.
+    Analysis and Findings:
+      score: 9.0
+      comment: The analysis presents clear and meaningful findings with good connections
+        to the data.
+    Extra Credit:
+      score: 0.0
+      comment: no reason
+  mp_number: 3.0
+evaluator: khushwant-khatri590
+
